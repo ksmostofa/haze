@@ -4,12 +4,15 @@ on:
   push:
     paths:
       - '.github/workflows/consolidate.yml'
+  issues:
+    types: [opened]
 
 permissions:
   contents: write
 
 jobs:
   consolidate:
+    if: github.event_name == 'push' || github.event.issue.title == 'internal: consolidate HAZE source'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
