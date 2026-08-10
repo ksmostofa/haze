@@ -78,7 +78,23 @@ export class Leaderboard extends DurableObject {
         window_start INTEGER NOT NULL,
         count INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+      );
     `);
+  }
+
+  cleanup() {
+    const now = Date.now();
+    const last = first(this.sql.exec("SELECT value FROM meta WHERE key='last_cleanup'"));
+    if (last && now - Number(last.value) < 21_600_000) return;
+    this.sql.exec("DELETE FROM runs WHERE started_at < ?", now - 86_400_000);
+    this.sql.exec("DELETE FROM rate_limits WHERE window_start < ?", now - 7_200_000);
+    this.sql.exec(
+      "INSERT INTO meta(key,value) VALUES('last_cleanup',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      now,
+    );
   }
 
   rate(bucket, limit, windowMs) {
@@ -138,6 +154,7 @@ export class Leaderboard extends DurableObject {
   }
 
   async start(body, request) {
+    this.cleanup();
     if (!validPlayerId(body.playerId)) return json({ error: "Invalid player ID" }, 400);
     if (body.build !== BUILD_ID) return json({ error: "Game build is not eligible for ranked play" }, 409);
     const ip = await ipKey(request);
