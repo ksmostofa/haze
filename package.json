@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "A first-person browser survival game with a global fastest-time leaderboard.",
   "scripts": {
-    "build": "node build.mjs",
+    "build": "node --check src/worker.js && node build.mjs",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
