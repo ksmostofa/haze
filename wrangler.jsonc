@@ -4,7 +4,7 @@
   "main": "src/worker.js",
   "compatibility_date": "2026-08-11",
   "build": {
-    "command": "node build.mjs"
+    "command": "node --check src/worker.js && node build.mjs"
   },
   "assets": {
     "directory": "./dist",
