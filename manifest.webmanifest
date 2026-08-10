@@ -1,0 +1,11 @@
+{
+  "name": "HAZE",
+  "short_name": "HAZE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "description": "HAZE — Cabin in the woods"
+}
