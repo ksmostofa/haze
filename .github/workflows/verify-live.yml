@@ -1,0 +1,96 @@
+name: Verify live HAZE
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  verify:
+    if: github.event.issue.title == 'internal: verify HAZE live'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify local production build
+        run: |
+          npm install --ignore-scripts
+          npm run build
+          test -s dist/index.html
+          grep -q '<title>HAZE</title>' dist/index.html
+          grep -q '/api/run/complete' dist/index.html
+          grep -q 'requestFullscreen' dist/index.html
+          if grep -q 'atob(' dist/index.html; then
+            echo 'Unexpected browser-side atob() found' >&2
+            exit 1
+          fi
+      - name: Wait for Cloudflare Git deployment
+        run: sleep 90
+      - name: Verify live Worker and API
+        env:
+          BASE_URL: https://haze.ksmostofa576.workers.dev
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "$BASE_URL/" -o /tmp/home.html
+          grep -q '<title>HAZE</title>' /tmp/home.html
+          grep -q 'requestFullscreen' /tmp/home.html
+          grep -q '/api/leaderboard' /tmp/home.html
+          if grep -q 'atob(' /tmp/home.html; then
+            echo 'Live site still contains obsolete atob loader' >&2
+            exit 1
+          fi
+
+          curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "$BASE_URL/api/config" -o /tmp/config.json
+          curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "$BASE_URL/api/leaderboard" -o /tmp/leaderboard.json
+
+          python - <<'PY'
+          import json
+          config=json.load(open('/tmp/config.json'))
+          board=json.load(open('/tmp/leaderboard.json'))
+          assert 'turnstileSiteKey' in config, config
+          assert isinstance(board.get('leaders'), list), board
+          assert 'player' in board, board
+          print('config:', config)
+          print('leaderboard rows:', len(board['leaders']))
+          PY
+
+          PLAYER="ci-verify-$(date +%s)-abcdefghijklmnop"
+          START=$(curl -fsS -X POST "$BASE_URL/api/run/start" -H 'content-type: application/json' --data "{\"playerId\":\"$PLAYER\",\"build\":\"haze-20260811-global-v1\"}")
+          python - "$START" <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1])
+          assert isinstance(d.get('runToken'),str) and len(d['runToken']) >= 50, d
+          assert isinstance(d.get('startedAt'),int), d
+          print('ranked run start endpoint: OK')
+          PY
+
+          cat > /tmp/status.md <<EOF
+          ## ✅ Live verification passed
+
+          - Production URL: \`$BASE_URL\`
+          - Production page is the real HAZE HTML (no browser Base64/\`atob()\` loader)
+          - Fullscreen client marker present
+          - Global leaderboard client marker present
+          - \`GET /api/config\`: OK
+          - \`GET /api/leaderboard\`: OK
+          - \`POST /api/run/start\`: OK
+          - Local production build: OK
+          - Verified at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          EOF
+      - name: Post result to issue
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/status.md
+      - name: Post failure to issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --body $'## ❌ Live verification failed\n\nThe GitHub Action build or live Cloudflare smoke test failed. Check the workflow run logs before treating the deployment as complete.'
