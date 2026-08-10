@@ -1,0 +1,66 @@
+name: Repair HAZE source
+
+on:
+  pull_request:
+    paths:
+      - '.repair-source'
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out main with history
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore verified payload from Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFIED_COMMIT=edb678e4bd124079f8b14bf5049c54b4a2f16a18
+          mkdir -p source
+          : > source/game.html.gz.b64
+          for i in 0 1 2 3; do
+            git show "$VERIFIED_COMMIT:assets/game.$i.b64" >> source/game.html.gz.b64
+          done
+          python - <<'PY'
+          from pathlib import Path
+          import base64,gzip,hashlib
+          p=Path('source/game.html.gz.b64')
+          raw=''.join(p.read_text().split())
+          html=gzip.decompress(base64.b64decode(raw))
+          assert len(html)==157780, len(html)
+          assert hashlib.sha256(html).hexdigest()=='41604a7fb60c003285eafb9196b7387140fb812d583432454f4ad4293843d6bc'
+          assert b'<title>HAZE</title>' in html
+          assert b'/api/run/complete' in html
+          assert b'requestFullscreen' in html
+          p.write_text(raw+'\n')
+          print('Historical payload verified:', len(raw), 'base64 chars')
+          PY
+      - name: Verify production build
+        run: |
+          npm install --ignore-scripts
+          npm run build
+          test -s dist/index.html
+          ! grep -q 'atob(' dist/index.html
+      - name: Commit repaired payload to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add source/game.html.gz.b64
+          if git diff --cached --quiet; then
+            echo 'Payload already repaired.'
+          else
+            git commit -m 'Repair HAZE source payload from verified history'
+            git push origin HEAD:main
+          fi
