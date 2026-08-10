@@ -15,7 +15,7 @@ A first-person browser survival game built with Three.js. Survive six waves, rea
 
 ## Stack
 
-- **Frontend:** single `index.html` + Three.js
+- **Game:** Three.js browser app
 - **Hosting:** Cloudflare Pages
 - **API:** Cloudflare Pages Functions
 - **Database:** Cloudflare D1
@@ -35,7 +35,7 @@ Ranking order:
 The official timer is server-backed:
 
 1. `/api/run/start` issues a signed run token when the run starts.
-2. `/api/run/complete` freezes the official time immediately when the final wave is cleared.
+2. `/api/run/complete` freezes the official time immediately when Wave 6 is cleared.
 3. The player enters a display name and passes Turnstile.
 4. `/api/run/finish` validates the signed completion proof and saves the best run to D1.
 
@@ -44,7 +44,8 @@ The leaderboard stores only each anonymous player's best result.
 ## Repository
 
 ```text
-index.html
+index.html                  # static bootstrap
+assets/game.*.b64           # compressed static game payload
 manifest.webmanifest
 _headers
 _routes.json
@@ -60,11 +61,11 @@ functions/
       finish.js
 ```
 
-The game itself remains a **single HTML file**. Only the leaderboard backend lives in separate Cloudflare Function files.
+The original HAZE game source is a single HTML document. The current GitHub copy stores that document as compressed static chunks because the connected publishing interface cannot transfer the full HTML blob in one write. The bootstrap reconstructs it entirely in the browser; the chunks are static files and do not use Pages Functions. This packaging can be collapsed back to one `index.html` later without changing the game or backend architecture.
 
 ## Cloudflare configuration
 
-Create a Pages project connected to this repository and use:
+Connect this repository to Cloudflare Pages with:
 
 ```text
 Production branch: main
@@ -73,7 +74,7 @@ Build command:     exit 0
 Output directory:  .
 ```
 
-Create a D1 database and apply `schema.sql`, then bind it as:
+Create a D1 database, apply `schema.sql`, and bind it to the Pages project as:
 
 ```text
 DB
