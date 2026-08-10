@@ -1,0 +1,45 @@
+name: Consolidate game HTML
+
+on:
+  push:
+    paths:
+      - '.github/workflows/consolidate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  consolidate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rebuild single index.html
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import base64, gzip
+          parts = sorted(Path('assets').glob('game.*.b64'), key=lambda p: int(p.stem.split('.')[-1]))
+          if not parts:
+              raise SystemExit('No payload chunks found')
+          payload = ''.join(p.read_text(encoding='utf-8').strip() for p in parts)
+          html = gzip.decompress(base64.b64decode(payload))
+          Path('index.html').write_bytes(html)
+          print(f'Rebuilt index.html: {len(html)} bytes from {len(parts)} chunks')
+          PY
+          test "$(wc -c < index.html)" -gt 150000
+          grep -q '<title>HAZE</title>' index.html
+          rm -rf assets
+          rm -f .github/workflows/consolidate.yml
+          rmdir .github/workflows 2>/dev/null || true
+          rmdir .github 2>/dev/null || true
+      - name: Commit clean repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Consolidate game into single HTML'
+          git push
