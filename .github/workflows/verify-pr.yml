@@ -1,0 +1,59 @@
+name: Verify HAZE production
+
+on:
+  pull_request:
+    paths:
+      - '.verify-live'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify source build
+        run: |
+          npm install --ignore-scripts
+          npm run build
+          test -s dist/index.html
+          grep -q '<title>HAZE</title>' dist/index.html
+          grep -q 'requestFullscreen' dist/index.html
+          grep -q '/api/run/complete' dist/index.html
+          ! grep -q 'atob(' dist/index.html
+      - name: Verify live Cloudflare Worker
+        env:
+          BASE_URL: https://haze.ksmostofa576.workers.dev
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 8 --retry-delay 8 --retry-all-errors "$BASE_URL/" -o /tmp/home.html
+          grep -q '<title>HAZE</title>' /tmp/home.html
+          grep -q 'requestFullscreen' /tmp/home.html
+          grep -q '/api/leaderboard' /tmp/home.html
+          ! grep -q 'atob(' /tmp/home.html
+          curl -fsS "$BASE_URL/api/config" -o /tmp/config.json
+          curl -fsS "$BASE_URL/api/leaderboard" -o /tmp/board.json
+          python - <<'PY'
+          import json
+          c=json.load(open('/tmp/config.json'))
+          b=json.load(open('/tmp/board.json'))
+          assert 'turnstileSiteKey' in c, c
+          assert isinstance(b.get('leaders'), list), b
+          assert 'player' in b, b
+          print('live config', c)
+          print('leaders', len(b['leaders']))
+          PY
+          PLAYER="ci-pr-$(date +%s)-abcdefghijklmnop"
+          START=$(curl -fsS -X POST "$BASE_URL/api/run/start" -H 'content-type: application/json' --data "{\"playerId\":\"$PLAYER\",\"build\":\"haze-20260811-global-v1\"}")
+          python - "$START" <<'PY'
+          import json,sys
+          d=json.loads(sys.argv[1])
+          assert isinstance(d.get('runToken'),str) and len(d['runToken']) >= 50, d
+          assert isinstance(d.get('startedAt'),int), d
+          print('ranked start OK')
+          PY
