@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Rebuild single index.html
+      - name: Rebuild and patch single index.html
         shell: bash
         run: |
           set -euo pipefail
@@ -28,12 +28,12 @@ jobs:
           Path('index.html').write_bytes(html)
           print(f'Rebuilt index.html: {len(html)} bytes from {len(parts)} chunks')
           PY
+          python .github/scripts/patch_game.py
           test "$(wc -c < index.html)" -gt 150000
           grep -q '<title>HAZE</title>' index.html
+          grep -q '/api/run/complete' index.html
           rm -rf assets
-          rm -f .github/workflows/consolidate.yml
-          rmdir .github/workflows 2>/dev/null || true
-          rmdir .github 2>/dev/null || true
+          rm -rf .github
       - name: Commit clean repository
         shell: bash
         run: |
