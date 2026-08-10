@@ -2,6 +2,8 @@
 
 A first-person browser survival game built with Three.js. Survive six waves, reach dawn, and compete for the fastest global completion time.
 
+**Play:** `https://haze.ksmostofa576.workers.dev`
+
 ## Features
 
 - First-person melee survival gameplay
@@ -36,27 +38,29 @@ Ranking order:
 
 Flow:
 
-1. `/api/run/start` creates a server-timed ranked run.
-2. `/api/run/complete` freezes the official time immediately when Wave 6 is cleared.
+1. `POST /api/run/start` creates a server-timed ranked run.
+2. `POST /api/run/complete` freezes the official time immediately when Wave 6 is cleared.
 3. The player enters a display name.
-4. `/api/run/finish` validates the completion proof and stores the result.
-5. Only that anonymous player's best run is retained on the leaderboard.
+4. `POST /api/run/finish` validates the stored completion proof and writes the result.
+5. Only that anonymous player's best run is retained.
 
 The official leaderboard clock is independent of the editable client-side `GS.time` value.
 
-## Repository
+## Repository layout
 
 ```text
-assets/game.*.b64   # source transport chunks for the game HTML
-build.mjs           # reconstructs the real single-file game at build time
+source/
+  game.html.gz.b64   # compressed transport copy of the single-file game source
+src/
+  worker.js          # API + SQLite Durable Object
+build.mjs            # verifies/decompresses source → dist/index.html
 manifest.webmanifest
 package.json
-src/worker.js       # API + SQLite Durable Object
-wrangler.jsonc      # Cloudflare deployment configuration
+wrangler.jsonc       # Cloudflare Worker, assets, DO binding + migration
 README.md
 ```
 
-`build.mjs` reconstructs the game **during Cloudflare's build**, producing:
+`build.mjs` runs during deployment and produces:
 
 ```text
 dist/
@@ -64,21 +68,26 @@ dist/
   manifest.webmanifest
 ```
 
-Players therefore receive a normal single `index.html`. There is no browser-side Base64/`atob()` loader.
+Players therefore receive a normal **single `index.html`**. There is no browser-side Base64/`atob()` loader.
 
-The source chunks only exist because the connected publishing interface could not upload the ~158 KB HTML source in one write. They are not deployed as public game assets.
+The compressed `source/game.html.gz.b64` exists only because the connected publishing interface cannot reliably send the ~158 KB HTML source in one GitHub write. It is a source-transport detail, not part of the player-facing runtime.
 
 ## Cloudflare deployment
 
-The repository is configured for the existing `haze` Worker.
-
-Cloudflare runs:
+The repository is configured for the existing `haze` Worker. Cloudflare runs:
 
 ```bash
 npx wrangler deploy
 ```
 
-Wrangler reads `wrangler.jsonc`, runs `node build.mjs`, uploads only `dist/` as static assets, deploys `src/worker.js`, and provisions the SQLite Durable Object binding used by the leaderboard.
+Wrangler then:
+
+1. runs `node build.mjs`
+2. verifies the game build markers
+3. emits `dist/index.html`
+4. uploads only `dist/` as static assets
+5. deploys `src/worker.js`
+6. provisions/binds the SQLite-backed `Leaderboard` Durable Object
 
 Public URL:
 
@@ -86,7 +95,7 @@ Public URL:
 https://haze.ksmostofa576.workers.dev
 ```
 
-No D1 database ID or secret is required for the current architecture.
+No D1 database ID, external database, or production secret is required by the current architecture.
 
 ## API
 
@@ -94,11 +103,11 @@ No D1 database ID or secret is required for the current architecture.
 POST /api/run/start
 POST /api/run/complete
 POST /api/run/finish
-GET  /api/leaderboard
+GET  /api/leaderboard?playerId=...
 GET  /api/config
 ```
 
-The public leaderboard is fetched only when needed; it is not continuously polled.
+The leaderboard is fetched only when opened or after submission; it is not continuously polled.
 
 ## Security model
 
@@ -106,15 +115,15 @@ Ranked submissions use:
 
 - server-created opaque run tokens
 - server-calculated elapsed time
-- completion proof stored server-side
+- server-stored completion proofs
 - build/player validation
-- 69-kill victory validation
+- expected 69-kill clear validation
 - score sanity checks
-- per-player and per-IP rate limiting
+- per-player + per-IP rate limiting
 - one-best-run-per-player storage
 - parameterized SQLite queries
 
-HAZE is still a client-side browser game, so this is pragmatic anti-cheat rather than a fully server-authoritative game simulation.
+This blocks trivial timer edits and forged one-request submissions. HAZE remains a client-side browser game, so this is pragmatic anti-cheat rather than fully server-authoritative gameplay.
 
 ## Privacy
 
@@ -127,10 +136,10 @@ Persistent leaderboard records contain only:
 - kills
 - update timestamp
 
-No email, password, or account is required. IP addresses are not stored; a short-lived daily hash is used only for abuse rate limiting.
+No email, password, or account is required. Raw IP addresses are not stored; a short-lived daily hash is used only for abuse rate limiting.
 
 ## Public repository
 
-The repository can safely remain public. Browser game code is downloadable by every player regardless of repository visibility, and the production architecture commits no credentials or signing secrets.
+The repository can safely remain public. Browser game code is downloadable by players regardless of repository visibility, and the production architecture commits no credentials or private signing keys.
 
 Public visibility does **not** grant an open-source license. No reuse license has been granted for HAZE at this time.
