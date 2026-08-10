@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 const BUILD_ID = "haze-20260811-global-v1";
 const EXPECTED_KILLS = 69;
-const MIN_RUN_MS = 10_000;
+const MIN_RUN_MS = 60_000;
 const MAX_RUN_MS = 7_200_000;
 const COMPLETION_TTL_MS = 86_400_000;
 const TOP_N = 10;
