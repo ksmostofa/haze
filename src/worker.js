@@ -43,11 +43,27 @@ async function ipKey(request) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`haze:${day}:${raw}`));
   return Array.from(new Uint8Array(digest).slice(0, 12), b => b.toString(16).padStart(2, "0")).join("");
 }
+async function verifyTurnstile(secret, token, request) {
+  if (!secret || typeof token !== "string" || !token) return false;
+  const form = new FormData();
+  form.append("secret", secret);
+  form.append("response", token);
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (ip) form.append("remoteip", ip);
+  const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    body: form,
+  });
+  if (!response.ok) return false;
+  const result = await response.json();
+  return result.success === true && (!result.action || result.action === "haze_score");
+}
 
 export class Leaderboard extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx = ctx;
+    this.env = env;
     this.sql = ctx.storage.sql;
     this.sql.exec(`
       CREATE TABLE IF NOT EXISTS leaderboard (
@@ -83,6 +99,10 @@ export class Leaderboard extends DurableObject {
         value INTEGER NOT NULL
       );
     `);
+  }
+
+  turnstileEnabled() {
+    return Boolean(this.env.TURNSTILE_SITE_KEY && this.env.TURNSTILE_SECRET);
   }
 
   cleanup() {
@@ -200,6 +220,10 @@ export class Leaderboard extends DurableObject {
     if (!this.rate(`finish:p:${body.playerId}`, 20, 3_600_000) || !this.rate(`finish:i:${ip}`, 60, 3_600_000)) {
       return json({ error: "Too many submissions. Try again later." }, 429);
     }
+    if (this.turnstileEnabled()) {
+      const ok = await verifyTurnstile(this.env.TURNSTILE_SECRET, body.turnstileToken, request);
+      if (!ok) return json({ error: "Verification failed or expired" }, 403);
+    }
     const run = first(this.sql.exec("SELECT * FROM runs WHERE completion_token=?", body.completionToken));
     if (!run || run.player_id !== body.playerId || run.build !== BUILD_ID || !run.completed_at) return json({ error: "Completion proof is invalid" }, 403);
     const age = Date.now() - Number(run.completed_at);
@@ -232,7 +256,11 @@ export class Leaderboard extends DurableObject {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/api/config") {
-        return json({ turnstileSiteKey: null, protection: "server-validation+rate-limit" });
+        const turnstile = this.turnstileEnabled();
+        return json({
+          turnstileSiteKey: turnstile ? this.env.TURNSTILE_SITE_KEY : null,
+          protection: turnstile ? "turnstile+server-validation+rate-limit" : "server-validation+rate-limit",
+        });
       }
       if (request.method === "GET" && url.pathname === "/api/leaderboard") {
         return json(this.leaderboard(url.searchParams.get("playerId") || ""));
