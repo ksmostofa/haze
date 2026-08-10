@@ -3,6 +3,8 @@ name: Verify HAZE
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -32,11 +34,9 @@ jobs:
           fi
       - name: Verify Worker source
         run: node --check src/worker.js
-      - name: Wait for Cloudflare Git deployment
-        if: github.ref == 'refs/heads/main'
-        run: sleep 60
+      - name: Wait briefly for Cloudflare Git deployment
+        run: sleep 45
       - name: Smoke-test live Cloudflare deployment
-        if: github.ref == 'refs/heads/main'
         env:
           BASE_URL: https://haze.ksmostofa576.workers.dev
         run: |
@@ -44,6 +44,7 @@ jobs:
           curl -fsS --retry 8 --retry-delay 8 --retry-all-errors "$BASE_URL/" -o /tmp/home.html
           grep -q '<title>HAZE</title>' /tmp/home.html
           grep -q 'requestFullscreen' /tmp/home.html
+          grep -q '/api/leaderboard' /tmp/home.html
           if grep -q 'atob(' /tmp/home.html; then
             echo 'Live site still contains obsolete atob loader' >&2
             exit 1
@@ -54,8 +55,8 @@ jobs:
           import json
           config=json.load(open('/tmp/config.json'))
           board=json.load(open('/tmp/leaderboard.json'))
-          assert 'turnstileSiteKey' in config
-          assert isinstance(board.get('leaders'), list)
-          assert 'player' in board
+          assert 'turnstileSiteKey' in config, config
+          assert isinstance(board.get('leaders'), list), board
+          assert 'player' in board, board
           print('HAZE live smoke test passed')
           PY
