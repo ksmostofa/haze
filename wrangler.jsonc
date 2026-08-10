@@ -19,12 +19,12 @@
       }
     ]
   },
-  "exports": {
-    "Leaderboard": {
-      "type": "durable-object",
-      "storage": "sqlite"
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Leaderboard"]
     }
-  },
+  ],
   "observability": {
     "enabled": true
   }
