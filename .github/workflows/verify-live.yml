@@ -1,16 +1,15 @@
 name: Verify live HAZE
 
 on:
-  issues:
-    types: [opened]
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   verify:
-    if: github.event.issue.title == 'internal: verify HAZE live'
+    if: github.event.pull_request.title == 'internal: verify HAZE live'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -31,7 +30,7 @@ jobs:
             exit 1
           fi
       - name: Wait for Cloudflare Git deployment
-        run: sleep 90
+        run: sleep 75
       - name: Verify live Worker and API
         env:
           BASE_URL: https://haze.ksmostofa576.workers.dev
@@ -48,7 +47,6 @@ jobs:
 
           curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "$BASE_URL/api/config" -o /tmp/config.json
           curl -fsS --retry 12 --retry-delay 10 --retry-all-errors "$BASE_URL/api/leaderboard" -o /tmp/leaderboard.json
-
           python - <<'PY'
           import json
           config=json.load(open('/tmp/config.json'))
@@ -70,27 +68,4 @@ jobs:
           print('ranked run start endpoint: OK')
           PY
 
-          cat > /tmp/status.md <<EOF
-          ## ✅ Live verification passed
-
-          - Production URL: \`$BASE_URL\`
-          - Production page is the real HAZE HTML (no browser Base64/\`atob()\` loader)
-          - Fullscreen client marker present
-          - Global leaderboard client marker present
-          - \`GET /api/config\`: OK
-          - \`GET /api/leaderboard\`: OK
-          - \`POST /api/run/start\`: OK
-          - Local production build: OK
-          - Verified at: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
-          EOF
-      - name: Post result to issue
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh issue comment "${{ github.event.issue.number }}" --body-file /tmp/status.md
-      - name: Post failure to issue
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh issue comment "${{ github.event.issue.number }}" --body $'## ❌ Live verification failed\n\nThe GitHub Action build or live Cloudflare smoke test failed. Check the workflow run logs before treating the deployment as complete.'
+          echo 'LIVE HAZE VERIFICATION PASSED'
