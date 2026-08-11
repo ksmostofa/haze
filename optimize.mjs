@@ -8,6 +8,11 @@ function replaceOnce(from, to, label) {
   if (count !== 1) throw new Error(`HAZE final optimization ${label}: expected one match, found ${count}`);
   html = html.replace(from, to);
 }
+function replaceExact(from, to, expected, label) {
+  const count = html.split(from).length - 1;
+  if (count !== expected) throw new Error(`HAZE final optimization ${label}: expected ${expected} matches, found ${count}`);
+  html = html.replaceAll(from, to);
+}
 
 // Lower only primitive tessellation on low/touch hardware. The authored
 // silhouettes, animation hierarchy, stats and hit volumes remain unchanged.
@@ -104,8 +109,7 @@ replaceOnce(
 // Explicitly release unique enemy geometries after death/restart. Materials and
 // FACE_GEO primitives are shared and intentionally retained.
 replaceOnce('if(e.dying>1)   {scene.remove(m); enemies.splice(i,1);} continue;','if(e.dying>1){scene.remove(m);disposeEnemyVisual(m);enemies.splice(i,1);} continue;',"dead enemy disposal");
-replaceOnce('for(const e of enemies)scene.remove(e.m); enemies.length=0;','for(const e of enemies){scene.remove(e.m);disposeEnemyVisual(e.m);} enemies.length=0;',"restart enemy disposal");
-replaceOnce('for(const e of enemies)scene.remove(e.m); enemies.length=0; CABIN.doorInt.visible=true;','for(const e of enemies){scene.remove(e.m);disposeEnemyVisual(e.m);} enemies.length=0; CABIN.doorInt.visible=true;',"title enemy disposal");
+replaceExact('for(const e of enemies)scene.remove(e.m); enemies.length=0;','for(const e of enemies){scene.remove(e.m);disposeEnemyVisual(e.m);} enemies.length=0;',2,"run/title enemy disposal");
 
 for(const marker of ["IMPACT_POOL_SIZE","disposeEnemyVisual","SHARED_ENEMY_GEOMETRIES","PERF_PROFILE.low?6:10"]){
   if(!html.includes(marker)) throw new Error(`HAZE final optimization missing ${marker}`);
