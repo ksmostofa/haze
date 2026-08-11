@@ -28,68 +28,53 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Verify Cloudflare origin and Netlify public domain
+      - name: Verify one Cloudflare app through both hostnames
         run: |
           set -euo pipefail
 
-          API_URL="https://haze.ksmostofa576.workers.dev"
-          NETLIFY_ORIGIN="https://survivethehaze.netlify.app"
-          CLOUDFLARE_ORIGIN="$API_URL"
+          CLOUDFLARE="https://haze.ksmostofa576.workers.dev"
+          NETLIFY="https://survivethehaze.netlify.app"
 
-          verify_page() {
-            BASE_URL="$1"
-            LABEL="$2"
-            HOME_FILE="/tmp/${LABEL}-home.html"
+          verify_host() {
+            BASE="$1"
+            ORIGIN="$2"
+            LABEL="$3"
+            HOME="/tmp/${LABEL}-home.html"
+            CONFIG="/tmp/${LABEL}-config.json"
+            BOARD="/tmp/${LABEL}-board.json"
+            PLAYER="ci-${LABEL}-$(date +%s)-abcdefghijklmnop"
 
-            for attempt in {1..18}; do
-              if curl -fsS "$BASE_URL/" -o "$HOME_FILE" \
-                && grep -q 'BUILD_ID="haze-20260811-global-v1"' "$HOME_FILE" \
-                && grep -q 'API_ORIGIN="https://haze.ksmostofa576.workers.dev"' "$HOME_FILE" \
-                && grep -q 'href="/how-to-play.css"' "$HOME_FILE" \
-                && grep -q 'src="/how-to-play.js"' "$HOME_FILE" \
-                && grep -q '<link rel="canonical" href="https://survivethehaze.netlify.app/"' "$HOME_FILE" \
-                && grep -q 'requestGameFullscreen' "$HOME_FILE" \
-                && ! grep -q 'window.__HAZE' "$HOME_FILE" \
-                && ! grep -q 'atob(' "$HOME_FILE"; then
+            for attempt in {1..24}; do
+              if curl -fsS -H 'cache-control: no-cache' "$BASE/" -o "$HOME" \
+                && grep -q 'BUILD_ID="haze-20260811-global-v1"' "$HOME" \
+                && grep -q 'href="/how-to-play.css"' "$HOME" \
+                && grep -q 'src="/how-to-play.js"' "$HOME" \
+                && grep -q 'requestGameFullscreen' "$HOME" \
+                && grep -q 'apiJSON("/api/run/start"' "$HOME" \
+                && ! grep -q 'API_ORIGIN' "$HOME" \
+                && ! grep -q 'window.__HAZE' "$HOME" \
+                && ! grep -q 'atob(' "$HOME"; then
                 break
               fi
-              if [ "$attempt" -eq 18 ]; then
+              if [ "$attempt" -eq 24 ]; then
                 echo "$LABEL production page failed verification" >&2
                 exit 1
               fi
               sleep 8
             done
 
-            curl -fsS "$BASE_URL/how-to-play.js" -o "/tmp/${LABEL}-howto.js"
-            curl -fsS "$BASE_URL/how-to-play.css" -o "/tmp/${LABEL}-howto.css"
+            curl -fsS "$BASE/how-to-play.js" -o "/tmp/${LABEL}-howto.js"
+            curl -fsS "$BASE/how-to-play.css" -o "/tmp/${LABEL}-howto.css"
             grep -q 'Desktop' "/tmp/${LABEL}-howto.js"
             grep -q 'Mobile' "/tmp/${LABEL}-howto.js"
             grep -q 'ctlModeGrid' "/tmp/${LABEL}-howto.css"
-          }
 
-          verify_api() {
-            ORIGIN="$1"
-            LABEL="$2"
-            CONFIG_FILE="/tmp/${LABEL}-config.json"
-            BOARD_FILE="/tmp/${LABEL}-leaderboard.json"
-            HEADERS_FILE="/tmp/${LABEL}-headers.txt"
-            PLAYER="ci-${LABEL}-$(date +%s)-abcdefghijklmnop"
-
-            curl -fsS -D "$HEADERS_FILE" -H "Origin: $ORIGIN" "$API_URL/api/config" -o "$CONFIG_FILE"
-            curl -fsS -H "Origin: $ORIGIN" -H "X-Haze-Player: $PLAYER" "$API_URL/api/leaderboard" -o "$BOARD_FILE"
-
-            if [ "$LABEL" = "netlify" ]; then
-              grep -qi '^access-control-allow-origin: https://survivethehaze.netlify.app' "$HEADERS_FILE"
-              curl -sS -o /dev/null -D /tmp/netlify-preflight.txt -X OPTIONS "$API_URL/api/run/start" \
-                -H "Origin: $ORIGIN" \
-                -H 'Access-Control-Request-Method: POST' \
-                -H 'Access-Control-Request-Headers: content-type,x-haze-player'
-              grep -q ' 204 ' /tmp/netlify-preflight.txt
-              grep -qi '^access-control-allow-origin: https://survivethehaze.netlify.app' /tmp/netlify-preflight.txt
-              grep -qi '^access-control-allow-methods: GET,POST,OPTIONS' /tmp/netlify-preflight.txt
-            fi
-
-            START=$(curl -fsS -X POST "$API_URL/api/run/start" \
+            # This is the real browser path: every API request uses the hostname
+            # visible in the address bar. Netlify must proxy these requests to
+            # the one Cloudflare backend without CORS or a second API client.
+            curl -fsS -H "Origin: $ORIGIN" "$BASE/api/config" -o "$CONFIG"
+            curl -fsS -H "Origin: $ORIGIN" -H "X-Haze-Player: $PLAYER" "$BASE/api/leaderboard" -o "$BOARD"
+            START=$(curl -fsS -X POST "$BASE/api/run/start" \
               -H "Origin: $ORIGIN" \
               -H 'content-type: application/json' \
               --data "{\"playerId\":\"$PLAYER\",\"build\":\"haze-20260811-global-v1\"}")
@@ -100,25 +85,22 @@ jobs:
           NODE
           }
 
-          verify_page "$CLOUDFLARE_ORIGIN" "cloudflare"
-          verify_page "$NETLIFY_ORIGIN" "netlify"
+          verify_host "$CLOUDFLARE" "$CLOUDFLARE" "cloudflare"
+          verify_host "$NETLIFY" "$NETLIFY" "netlify"
           cmp /tmp/cloudflare-home.html /tmp/netlify-home.html
-
-          verify_api "$CLOUDFLARE_ORIGIN" "cloudflare"
-          verify_api "$NETLIFY_ORIGIN" "netlify"
 
           node - <<'NODE'
           const fs = require('node:fs');
           let reference = null;
           for (const label of ['cloudflare', 'netlify']) {
             const config = JSON.parse(fs.readFileSync(`/tmp/${label}-config.json`));
-            const board = JSON.parse(fs.readFileSync(`/tmp/${label}-leaderboard.json`));
+            const board = JSON.parse(fs.readFileSync(`/tmp/${label}-board.json`));
             if (config.build !== 'haze-20260811-global-v1') throw new Error(`${label}: wrong live build`);
             if (config.season !== 'night-1') throw new Error(`${label}: wrong live season`);
             if (!['verified-run', 'turnstile+verified-run'].includes(config.protection)) throw new Error(`${label}: invalid protection mode`);
             if (!Array.isArray(board.leaders) || !('player' in board)) throw new Error(`${label}: invalid leaderboard response`);
             if (!reference) reference = { build: config.build, season: config.season, protection: config.protection };
-            else if (config.build !== reference.build || config.season !== reference.season || config.protection !== reference.protection) throw new Error('public and origin API configurations differ');
-            console.log(`${label} browser flow verified: ${config.protection}; ${board.leaders.length} leaders`);
+            else if (config.build !== reference.build || config.season !== reference.season || config.protection !== reference.protection) throw new Error('hostnames are not serving one authoritative backend');
+            console.log(`${label} same-origin flow verified: ${config.protection}; ${board.leaders.length} leaders`);
           }
           NODE
