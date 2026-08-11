@@ -1,11 +1,11 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "haze",
-  "main": "src/worker.js",
+  "main": "src/entry.js",
   "compatibility_date": "2026-08-11",
   "keep_vars": true,
   "build": {
-    "command": "node --check src/worker.js && node build.mjs"
+    "command": "node --check src/entry.js && node --check src/worker.js && node build.mjs"
   },
   "assets": {
     "directory": "./dist",
