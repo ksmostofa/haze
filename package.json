@@ -5,7 +5,7 @@
   "description": "A first-person browser survival game with a verified global leaderboard.",
   "type": "module",
   "scripts": {
-    "build": "node --check src/entry.js && node --check src/worker.js && node build.mjs",
+    "build": "node --check src/entry.js && node --check src/worker.js && node --check build.mjs && node --check optimize.mjs && node build.mjs && node optimize.mjs",
     "check": "npm run build && npm test",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
