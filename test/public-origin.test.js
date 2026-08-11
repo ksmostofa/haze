@@ -32,16 +32,22 @@ describe("public Netlify domain", () => {
     expect(redirects.trim()).toBe("/*  https://haze.ksmostofa576.workers.dev/:splat  200!");
   });
 
-  it("injects one adaptive frontend and the desktop/mobile guide", () => {
+  it("injects one adaptive allocation-light frontend and the desktop/mobile guide", () => {
     expect(build).toContain("PERF_PROFILE");
     expect(build).toContain("updateAdaptiveQuality");
+    expect(build).toContain("enemyRouteScratch");
+    expect(build).toContain("allocation-free cabin sweep");
     expect(build).toContain('/how-to-play.css');
     expect(build).toContain('/how-to-play.js');
   });
 
   it("live verification exercises API requests through each visible hostname", () => {
-    expect(verify).toContain('curl -fsS -H "Origin: $ORIGIN" "$BASE/api/config"');
-    expect(verify).toContain('curl -fsS -X POST "$BASE/api/run/start"');
+    expect(verify).toContain('"$BASE/api/config"');
+    expect(verify).toContain('"$BASE/api/leaderboard"');
+    expect(verify).toContain('"$BASE/api/run/start"');
+    expect(verify).toContain('-H "Origin: $ORIGIN"');
+    expect(verify).toContain('verify_host "$CLOUDFLARE" "$CLOUDFLARE" "cloudflare"');
+    expect(verify).toContain('verify_host "$NETLIFY" "$NETLIFY" "netlify"');
     expect(verify).not.toContain('API_URL/api/run/start');
   });
 });
