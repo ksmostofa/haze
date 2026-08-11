@@ -21,7 +21,7 @@ const required = [
 for (const marker of required) {
   if (!html.includes(marker)) throw new Error(`HAZE build verification failed: missing ${marker}`);
 }
-for (const forbidden of ["window.__HAZE", "?debug=1", "unpkg.com", "cdnjs.cloudflare.com"]) {
+for (const forbidden of ["window.__HAZE", "?debug=1", "unpkg.com", "cdnjs.cloudflare.com", "API_ORIGIN"]) {
   if (html.includes(forbidden)) throw new Error(`HAZE build verification failed: forbidden production marker ${forbidden}`);
 }
 if (html.length < 150_000) throw new Error(`HAZE build verification failed: HTML unexpectedly small (${html.length} chars).`);
@@ -33,34 +33,21 @@ for (const asset of ["public/how-to-play.css", "public/how-to-play.js"]) {
 }
 
 const publicOrigin = "https://survivethehaze.netlify.app";
-const apiOrigin = "https://haze.ksmostofa576.workers.dev";
-let productionHtml = html.replaceAll(apiOrigin, publicOrigin);
-productionHtml = productionHtml.replace(
-  'const BUILD_ID="haze-20260811-global-v1";',
-  `const BUILD_ID="haze-20260811-global-v1";\nconst API_ORIGIN="${apiOrigin}";`,
-);
-productionHtml = productionHtml.replace(
-  "const res=await fetch(url,{...opts,headers});",
-  'const res=await fetch(url.startsWith("/api/")?API_ORIGIN+url:url,{...opts,headers});',
-);
-productionHtml = productionHtml.replace(
-  "</head>",
-  '<link rel="stylesheet" href="/how-to-play.css"/>\n</head>',
-);
-productionHtml = productionHtml.replace(
-  "</body>",
-  '<script src="/how-to-play.js"></script>\n</body>',
-);
+const cloudflareOrigin = "https://haze.ksmostofa576.workers.dev";
+let productionHtml = html.replaceAll(cloudflareOrigin, publicOrigin);
+productionHtml = productionHtml.replace("</head>", '<link rel="stylesheet" href="/how-to-play.css"/>\n</head>');
+productionHtml = productionHtml.replace("</body>", '<script src="/how-to-play.js"></script>\n</body>');
 
 for (const marker of [
   'href="/how-to-play.css"',
   'src="/how-to-play.js"',
-  `const API_ORIGIN="${apiOrigin}";`,
-  'url.startsWith("/api/")?API_ORIGIN+url:url',
   `<link rel="canonical" href="${publicOrigin}/"/>`,
+  'apiJSON("/api/run/start"',
+  'apiJSON("/api/leaderboard"',
 ]) {
   if (!productionHtml.includes(marker)) throw new Error(`HAZE build verification failed: missing production transform ${marker}`);
 }
+if (productionHtml.includes("API_ORIGIN")) throw new Error("HAZE build verification failed: cross-origin API client leaked into production.");
 
 rmSync("dist", { recursive: true, force: true });
 cpSync("public", "dist", { recursive: true });
