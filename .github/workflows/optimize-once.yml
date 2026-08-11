@@ -1,0 +1,86 @@
+name: Apply HAZE performance optimization once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/optimize-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Patch canonical HAZE source
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'public/index.html';
+          let s = fs.readFileSync(path, 'utf8');
+          function replaceOnce(from, to, label) {
+            const n = s.split(from).length - 1;
+            if (n !== 1) throw new Error(`${label}: expected exactly one match, found ${n}`);
+            s = s.replace(from, to);
+          }
+
+          replaceOnce(
+            'const $=id=>document.getElementById(id);',
+            `const $=id=>document.getElementById(id);\nconst PERF_PROFILE=(()=>{\n  const touch=(navigator.maxTouchPoints||0)>0||matchMedia("(pointer:coarse)").matches||matchMedia("(hover:none)").matches;\n  const cores=navigator.hardwareConcurrency||4,mem=navigator.deviceMemory||4;\n  const low=touch||cores<=4||mem<=4;\n  return {touch,low,touchDpr:1,desktopDpr:1.45,pixelRatio:Math.min(devicePixelRatio,low?1:1.45),groundSegments:low?82:124,farTrees:low?18:34,grassTufts:low?62:92,dust:low?96:160,rain:low?620:1050};\n})();`,
+            'performance profile'
+          );
+          replaceOnce(
+            'try{renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});}',
+            'try{renderer=new THREE.WebGLRenderer({antialias:!PERF_PROFILE.low,powerPreference:"high-performance",stencil:false});}',
+            'renderer options'
+          );
+          replaceOnce('renderer.setPixelRatio(Math.min(devicePixelRatio,1.8));','renderer.setPixelRatio(PERF_PROFILE.pixelRatio);','initial DPR');
+          replaceOnce('renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;','renderer.shadowMap.enabled=!PERF_PROFILE.low; renderer.shadowMap.type=THREE.PCFShadowMap;','shadow mode');
+          replaceOnce('const S=260, geo=new THREE.PlaneGeometry(S,S,150,150), p=geo.attributes.position;','const S=260, geo=new THREE.PlaneGeometry(S,S,PERF_PROFILE.groundSegments,PERF_PROFILE.groundSegments), p=geo.attributes.position;','ground tessellation');
+          replaceOnce('const nB=4+((Math.random()*4)|0);','const nB=PERF_PROFILE.low?3+((Math.random()*3)|0):4+((Math.random()*4)|0);','branch density');
+          replaceOnce('for(let i=0,n=7+((Math.random()*7)|0);i<n;i++){','for(let i=0,n=PERF_PROFILE.low?5+((Math.random()*5)|0):7+((Math.random()*7)|0);i<n;i++){','canopy density');
+          replaceOnce('const count=54-ring*4, base=CLEARING_R+ring*7;','const count=PERF_PROFILE.low?[42,38,34][ring]:54-ring*4, base=CLEARING_R+ring*7;','forest ring density');
+          replaceOnce('for(let i=0;i<40;i++){const a=Math.random()*6.28,r=CLEARING_R+26+Math.random()*40; tree(Math.cos(a)*r,Math.sin(a)*r,1.4+Math.random()*1.2);}','for(let i=0;i<PERF_PROFILE.farTrees;i++){const a=Math.random()*6.28,r=CLEARING_R+26+Math.random()*40; tree(Math.cos(a)*r,Math.sin(a)*r,1.4+Math.random()*1.2);}','far forest');
+          replaceOnce('for(let i=0;i<100;i++){const a=Math.random()*6.28,r=7+Math.random()*(CLEARING_R-3); grassTuft(Math.cos(a)*r,Math.sin(a)*r);}','for(let i=0;i<PERF_PROFILE.grassTufts;i++){const a=Math.random()*6.28,r=7+Math.random()*(CLEARING_R-3); grassTuft(Math.cos(a)*r,Math.sin(a)*r);}','grass density');
+          replaceOnce('window.__trunks=segments(trunkData,new THREE.CylinderGeometry(.16,.6,1,7),true,MAT.forestTrunk);','window.__trunks=segments(trunkData,new THREE.CylinderGeometry(.16,.6,1,7),!PERF_PROFILE.low,MAT.forestTrunk);','trunk shadows');
+          replaceOnce('const canopy=new THREE.InstancedMesh(geo,MAT.forestLeaf,leafData.length);canopy.castShadow=true;canopy.receiveShadow=false;','const canopy=new THREE.InstancedMesh(geo,MAT.forestLeaf,leafData.length);canopy.castShadow=!PERF_PROFILE.low;canopy.receiveShadow=false;','canopy shadows');
+          replaceOnce('const N=180,g=new THREE.BufferGeometry(),pos=new Float32Array(N*3);','const N=PERF_PROFILE.dust,g=new THREE.BufferGeometry(),pos=new Float32Array(N*3);','dust count');
+          replaceOnce('const N=1200,g=new THREE.BufferGeometry(),pos=new Float32Array(N*3),vy=new Float32Array(N);','const N=PERF_PROFILE.rain,g=new THREE.BufferGeometry(),pos=new Float32Array(N*3),vy=new Float32Array(N);','rain count');
+          replaceOnce(
+            '  renderer.setPixelRatio(Math.min(devicePixelRatio,touchLikely?1.35:1.8));',
+            '  const cap=touchLikely?PERF_PROFILE.touchDpr:PERF_PROFILE.desktopDpr;if(adaptiveDpr>cap){adaptiveDpr=cap;renderer.setPixelRatio(adaptiveDpr);renderer.setSize(innerWidth,innerHeight,false);}',
+            'control-mode DPR'
+          );
+          replaceOnce(
+            'applyBrightness();\n\n/* Monochrome post:',
+            `applyBrightness();\nlet adaptiveDpr=PERF_PROFILE.pixelRatio,perfFrames=0,perfElapsed=0,perfCooldown=0;\nfunction updateAdaptiveQuality(dt){\n  if(!PERF_PROFILE.low||GS.state!=="playing")return;\n  perfFrames++;perfElapsed+=dt;perfCooldown=Math.max(0,perfCooldown-dt);\n  if(perfElapsed<2.5||perfCooldown>0)return;\n  const fps=perfFrames/perfElapsed;let next=adaptiveDpr;\n  if(fps<44)next=Math.max(.72,adaptiveDpr-.12);else if(fps>57)next=Math.min(PERF_PROFILE.pixelRatio,adaptiveDpr+.05);\n  if(Math.abs(next-adaptiveDpr)>.01){adaptiveDpr=next;renderer.setPixelRatio(adaptiveDpr);renderer.setSize(innerWidth,innerHeight,false);perfCooldown=4;}\n  perfFrames=0;perfElapsed=0;\n}\n\n/* Monochrome post:`,
+            'adaptive quality'
+          );
+          replaceOnce('    GS.time+=dt;\n    GS.hudTimer-=dt;', '    GS.time+=dt;\n    updateAdaptiveQuality(dt);\n    GS.hudTimer-=dt;', 'adaptive quality loop');
+
+          fs.writeFileSync(path, s);
+
+          const workerPath='src/worker.js';
+          let w=fs.readFileSync(workerPath,'utf8');
+          const old='  headers.set("x-frame-options", "DENY");\n  headers.set("content-security-policy",';
+          const neu='  headers.set("x-frame-options", "DENY");\n  const contentType=headers.get("content-type")||"";\n  if(contentType.includes("text/html")) headers.set("cache-control","no-cache, no-store, must-revalidate");\n  headers.set("content-security-policy",';
+          if(!w.includes(old)) throw new Error('HTML cache-control patch target missing');
+          w=w.replace(old,neu);
+          fs.writeFileSync(workerPath,w);
+          NODE
+
+          rm .github/workflows/optimize-once.yml
+          npm ci
+          npm run check
+      - name: Commit optimized canonical source
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Optimize HAZE rendering and fresh-host delivery'
+          git push
