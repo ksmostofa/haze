@@ -15,7 +15,7 @@
     "three": "0.128.0"
   },
   "devDependencies": {
-    "vitest": "4.0.18",
+    "vitest": "4.1.10",
     "wrangler": "4.120.0"
   }
 }
