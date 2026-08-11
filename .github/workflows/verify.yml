@@ -60,9 +60,9 @@ jobs:
             HEADERS_FILE="/tmp/${LABEL}-headers.txt"
             PLAYER="ci-${LABEL}-$(date +%s)-abcdefghijklmnop"
 
-            echo "=== waiting for $LABEL production page: $BASE ==="
+            echo "=== waiting for $LABEL final production page: $BASE ==="
             ready=0
-            for attempt in {1..24}; do
+            for attempt in {1..30}; do
               STATUS=$(curl -sS -o "$HOME" -w '%{http_code}' -H 'cache-control: no-cache' "$BASE/" || true)
               if [ "$STATUS" = "200" ] \
                 && grep -q 'BUILD_ID="haze-20260811-global-v1"' "$HOME" \
@@ -74,21 +74,25 @@ jobs:
                 && grep -q 'enemyRouteScratch' "$HOME" \
                 && grep -q 'const sinY=Math.sin(yaw)' "$HOME" \
                 && grep -q 'let alive=0;for(const e of enemies)' "$HOME" \
+                && grep -q 'IMPACT_POOL_SIZE' "$HOME" \
+                && grep -q 'SHARED_ENEMY_GEOMETRIES' "$HOME" \
+                && grep -q 'disposeEnemyVisual' "$HOME" \
+                && ! grep -q 'vel.push(new THREE.Vector3' "$HOME" \
                 && grep -q 'apiJSON("/api/run/start"' "$HOME" \
                 && ! grep -q 'API_ORIGIN' "$HOME" \
                 && ! grep -q 'window.__HAZE' "$HOME" \
                 && ! grep -q 'atob(' "$HOME"; then
                 ready=1
-                echo "$LABEL optimized production shell is current on attempt $attempt"
+                echo "$LABEL final pooled production shell is current on attempt $attempt"
                 break
               fi
-              echo "$LABEL not current yet (attempt $attempt, HTTP $STATUS)"
+              echo "$LABEL final build not current yet (attempt $attempt, HTTP $STATUS)"
               sleep 8
             done
-            [ "$ready" = "1" ] || fail_response "$LABEL" "production page readiness" "$STATUS" "$HOME"
+            [ "$ready" = "1" ] || fail_response "$LABEL" "final production page readiness" "$STATUS" "$HOME"
 
             curl -sS -D "$HEADERS_FILE" -o /dev/null -H 'cache-control: no-cache' "$BASE/"
-            grep -qi '^cache-control:.*no-cache' "$HEADERS_FILE" || { echo "::error::$LABEL HTML response can be served stale"; cat "$HEADERS_FILE"; exit 1; }
+            grep -Eqi '^cache-control:.*(no-cache|max-age=0)' "$HEADERS_FILE" || { echo "::error::$LABEL HTML response lacks forced revalidation"; cat "$HEADERS_FILE"; exit 1; }
 
             for asset in how-to-play.js how-to-play.css; do
               FILE="/tmp/${LABEL}-${asset}"
@@ -142,6 +146,6 @@ jobs:
             if (!Array.isArray(board.leaders) || !('player' in board)) throw new Error(`${label}: invalid leaderboard response`);
             if (!reference) reference = { build: config.build, season: config.season, protection: config.protection };
             else if (config.build !== reference.build || config.season !== reference.season || config.protection !== reference.protection) throw new Error('hostnames are not serving one authoritative backend');
-            console.log(`${label} optimized same-origin flow verified: ${config.protection}; ${board.leaders.length} leaders`);
+            console.log(`${label} final optimized same-origin flow verified: ${config.protection}; ${board.leaders.length} leaders`);
           }
           NODE
