@@ -1,0 +1,58 @@
+name: Verify HAZE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  live-smoke:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for Cloudflare Git deployment and verify production
+        env:
+          BASE_URL: https://haze.ksmostofa576.workers.dev
+        run: |
+          set -euo pipefail
+          for attempt in {1..15}; do
+            if curl -fsS "$BASE_URL/" -o /tmp/home.html \
+              && grep -q 'BUILD_ID="haze-20260811-global-v1"' /tmp/home.html \
+              && grep -q 'runProof' /tmp/home.html \
+              && ! grep -q 'window.__HAZE' /tmp/home.html; then
+              break
+            fi
+            if [ "$attempt" -eq 15 ]; then exit 1; fi
+            sleep 12
+          done
+          curl -fsS "$BASE_URL/api/config" -o /tmp/config.json
+          curl -fsS "$BASE_URL/api/leaderboard" -o /tmp/leaderboard.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const config = JSON.parse(fs.readFileSync('/tmp/config.json'));
+          const board = JSON.parse(fs.readFileSync('/tmp/leaderboard.json'));
+          if (config.build !== 'haze-20260811-global-v1') throw new Error('wrong live build');
+          if (config.season !== 'night-1') throw new Error('wrong live season');
+          if (!['verified-run', 'turnstile+verified-run'].includes(config.protection)) throw new Error('invalid protection mode');
+          if (!Array.isArray(board.leaders) || !('player' in board)) throw new Error('invalid leaderboard response');
+          console.log(`Live HAZE verified: ${config.protection}; ${board.leaders.length} leaders`);
+          NODE

@@ -2,7 +2,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "haze",
   "main": "src/worker.js",
-  "compatibility_date": "2026-08-10",
+  "compatibility_date": "2026-08-11",
+  "keep_vars": true,
   "build": {
     "command": "node --check src/worker.js && node build.mjs"
   },
@@ -26,6 +27,7 @@
     }
   ],
   "observability": {
-    "enabled": true
+    "enabled": true,
+    "head_sampling_rate": 1
   }
 }

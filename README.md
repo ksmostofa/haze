@@ -1,145 +1,72 @@
 # HAZE
 
-A first-person browser survival game built with Three.js. Survive six waves, reach dawn, and compete for the fastest global completion time.
+A first-person Three.js survival game. Clear six waves before dawn and compete for the fastest verified time.
 
-**Play:** `https://haze.ksmostofa576.workers.dev`
+**Production:** <https://haze.ksmostofa576.workers.dev>
 
-## Features
+## Production stack
 
-- First-person melee survival gameplay
-- Desktop + touch controls
-- Fullscreen entry and landscape-first mobile play
-- Six waves, multiple weapons, shelter healing, score and kills
-- Global fastest-time leaderboard
-- Anonymous player identity — no signup required
-- Personal best + global rank
-- Server-timed ranked runs with lightweight anti-cheat
-- Automatic GitHub → Cloudflare deployment
+- Cloudflare Worker Static Assets for the game
+- One SQLite Durable Object for runs and leaderboard records
+- Optional Cloudflare Turnstile, enabled only when both secrets are configured
+- GitHub as source of truth; Cloudflare Workers Builds deploys `main`
+- Self-hosted, pinned Three.js dependency
 
-## Stack
+This is deliberately one free platform, one deploy, and one database. Convex, Supabase, Vercel, Netlify Functions, Firebase, Redis, a VPS, and user accounts would add cost or failure modes without improving this game.
 
-- **Game:** single-file Three.js HTML build
-- **Hosting/API:** Cloudflare Workers + Static Assets
-- **Leaderboard storage:** Cloudflare SQLite Durable Object
-- **Source/deploy:** GitHub → Cloudflare Workers Builds
-- **Cost target:** Cloudflare Free plan
+## Ranked protocol
 
-No Firebase, Supabase, VPS, external database, login provider, or paid backend is required.
+1. The client waits for `POST /api/run/start` before gameplay begins.
+2. The server stores a single-use, opaque run ID and start timestamp.
+3. The client records bounded kill and wave-split events while playing.
+4. Victory immediately calls `POST /api/run/complete`; the server freezes elapsed time, validates the six-wave proof, derives score itself, and stores a proof hash.
+5. Name entry and Turnstile happen after the clock has stopped.
+6. `POST /api/run/finish` atomically consumes the completed run and inserts or updates only a faster personal best.
 
-## Ranked runs
+Ranking is fastest time, then higher server-derived score, then earlier achievement. The public API returns the Top 10. Exact ranks are computed only inside the cached Top 100; everyone else receives `100+`. There is no quota-destroying `COUNT(*)` rank scan.
 
-Only successful six-wave clears can enter the leaderboard.
+This is pragmatic anti-cheat for a downloadable browser game, not a claim of server-authoritative combat. It blocks trivial one-request fake wins, client-supplied scores, token replay, timing-after-victory, malformed proofs, and casual automated spam. Determined attackers can still modify the client and synthesize a plausible event stream.
 
-Ranking order:
+## Privacy and storage
 
-1. Fastest completion time
-2. Higher score
-3. More kills
+Persistent leaderboard data is limited to an anonymous browser ID, chosen display name, time, score, kills, season, and achievement timestamp. Raw IP addresses are never stored. In-memory rate limiting uses a daily truncated hash and naturally expires when the Durable Object is evicted.
 
-Flow:
+Old incomplete/completed runs are deleted after 24 hours. Completed tokens are single-use. Display names are NFKC-normalized, limited by Unicode code points, and reject control, bidi, private-use, surrogate, and unassigned characters.
 
-1. `POST /api/run/start` creates a server-timed ranked run.
-2. `POST /api/run/complete` freezes the official time immediately when Wave 6 is cleared.
-3. The player enters a display name.
-4. `POST /api/run/finish` validates the stored completion proof and writes the result.
-5. Only that anonymous player's best run is retained.
+## Local verification
 
-The official leaderboard clock is independent of the editable client-side `GS.time` value.
+```bash
+npm ci
+npm run check
+npm run dev
+```
+
+`npm run check` validates the Worker syntax, production asset markers, absence of debug/CDN loaders, and the ranked protocol tests.
 
 ## Repository layout
 
 ```text
-source/
-  game.html.gz.b64   # compressed transport copy of the single-file game source
-src/
-  worker.js          # API + SQLite Durable Object
-build.mjs            # verifies/decompresses source → dist/index.html
-manifest.webmanifest
-package.json
-wrangler.jsonc       # Cloudflare Worker, assets, DO binding + migration
-README.md
+public/                 game source, manifest, static headers
+src/protocol.js         pure ranked-proof validation
+src/worker.js           API and SQLite Durable Object
+test/protocol.test.js   anti-cheat and quota regression tests
+build.mjs               deterministic public/ → dist/ build
+wrangler.jsonc          Worker, assets, observability, and DO binding
 ```
 
-`build.mjs` runs during deployment and produces:
+## Turnstile
 
-```text
-dist/
-  index.html
-  manifest.webmanifest
-```
+Set both values in Cloudflare for production protection:
 
-Players therefore receive a normal **single `index.html`**. There is no browser-side Base64/`atob()` loader.
+- `TURNSTILE_SITE_KEY` as a Worker variable
+- `TURNSTILE_SECRET` as a Worker secret
 
-The compressed `source/game.html.gz.b64` exists only because the connected publishing interface cannot reliably send the ~158 KB HTML source in one GitHub write. It is a source-transport detail, not part of the player-facing runtime.
+The server validates Turnstile success plus the exact `haze_score` action, request hostname, and completion-token `cdata`. If either setting is absent, ranked proof validation still runs and `/api/config` reports `verified-run` instead of `turnstile+verified-run`.
 
-## Cloudflare deployment
+## Fullscreen behavior
 
-The repository is configured for the existing `haze` Worker. Cloudflare runs:
+Browsers prohibit fullscreen without a user gesture. HAZE therefore uses a single explicit **Enter Fullscreen** gate, which requests fullscreen, landscape orientation where supported, and a screen wake lock. A separate fullscreen control remains available if the browser rejects the initial request.
 
-```bash
-npx wrangler deploy
-```
+## License
 
-Wrangler then:
-
-1. runs `node build.mjs`
-2. verifies the game build markers
-3. emits `dist/index.html`
-4. uploads only `dist/` as static assets
-5. deploys `src/worker.js`
-6. provisions/binds the SQLite-backed `Leaderboard` Durable Object
-
-Public URL:
-
-```text
-https://haze.ksmostofa576.workers.dev
-```
-
-No D1 database ID, external database, or production secret is required by the current architecture.
-
-## API
-
-```text
-POST /api/run/start
-POST /api/run/complete
-POST /api/run/finish
-GET  /api/leaderboard?playerId=...
-GET  /api/config
-```
-
-The leaderboard is fetched only when opened or after submission; it is not continuously polled.
-
-## Security model
-
-Ranked submissions use:
-
-- server-created opaque run tokens
-- server-calculated elapsed time
-- server-stored completion proofs
-- build/player validation
-- expected 69-kill clear validation
-- score sanity checks
-- per-player + per-IP rate limiting
-- one-best-run-per-player storage
-- parameterized SQLite queries
-
-This blocks trivial timer edits and forged one-request submissions. HAZE remains a client-side browser game, so this is pragmatic anti-cheat rather than fully server-authoritative gameplay.
-
-## Privacy
-
-Persistent leaderboard records contain only:
-
-- anonymous browser player ID
-- chosen display name
-- best completion time
-- score
-- kills
-- update timestamp
-
-No email, password, or account is required. Raw IP addresses are not stored; a short-lived daily hash is used only for abuse rate limiting.
-
-## Public repository
-
-The repository can safely remain public. Browser game code is downloadable by players regardless of repository visibility, and the production architecture commits no credentials or private signing keys.
-
-Public visibility does **not** grant an open-source license. No reuse license has been granted for HAZE at this time.
+The repository is public for deployment transparency. No reuse license is granted.
