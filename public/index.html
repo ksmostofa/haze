@@ -137,6 +137,7 @@
     padding:9px 0;cursor:pointer;pointer-events:auto;transition:color .12s,transform .12s;width:max-content}
   .mlist li:hover,.mlist li.sel{color:#fff;transform:translateX(10px)}
   .mlist li:focus-visible,.btn:focus-visible,.scoreName:focus-visible,.modeSelect:focus-visible{outline:2px solid #f4f4f4;outline-offset:5px;color:#fff}
+  .btn:disabled{opacity:.42;cursor:not-allowed;filter:none}
   .mlist li.disabled{color:#4a4c50;pointer-events:none;transform:none}
   .mnote{font-family:Arial;font-size:11px;letter-spacing:.26em;color:#6d7075;margin-top:34px;text-transform:uppercase}
   .startControls{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;font:700 10px Arial;letter-spacing:.16em;text-transform:uppercase;color:#aeb1b5}
@@ -533,7 +534,9 @@ async function submitVictory(){
 }
 
 /* ============================ RENDERER ============================ */
-const renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});
+let renderer;
+try{renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:"high-performance"});}
+catch(error){const sub=document.querySelector("#entryGate .entrySub"),button=$("enterGame");sub.textContent="WebGL is unavailable in this browser";button.textContent="3D graphics required";button.disabled=true;$('loading').style.display="none";return;}
 renderer.setPixelRatio(Math.min(devicePixelRatio,1.8));
 renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
