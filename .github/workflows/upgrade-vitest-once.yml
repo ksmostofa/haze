@@ -1,0 +1,36 @@
+name: Upgrade Vitest once
+
+on:
+  push:
+    paths:
+      - '.github/workflows/upgrade-vitest-once.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Upgrade vulnerable test runner
+        run: npm install --save-dev --save-exact vitest@4.1.10
+      - name: Verify runtime and full dependency audits
+        run: |
+          npm audit --omit=dev --audit-level=critical
+          npm audit --audit-level=critical
+      - run: npm run check
+      - name: Remove one-time workflow
+        run: rm .github/workflows/upgrade-vitest-once.yml
+      - name: Commit dependency hardening
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json package-lock.json .github/workflows/upgrade-vitest-once.yml
+          git commit -m 'Upgrade Vitest to patched release'
+          git push
