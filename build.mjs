@@ -1,4 +1,4 @@
-import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 const source = "public/index.html";
 const html = readFileSync(source, "utf8");
@@ -28,10 +28,32 @@ if (html.length < 150_000) throw new Error(`HAZE build verification failed: HTML
 
 const threeSource = "node_modules/three/build/three.min.js";
 if (!existsSync(threeSource)) throw new Error("Three.js dependency is missing; run npm ci first.");
+for (const asset of ["public/how-to-play.css", "public/how-to-play.js"]) {
+  if (!existsSync(asset)) throw new Error(`HAZE build verification failed: missing ${asset}`);
+}
+
+const publicOrigin = "https://survivethehaze.netlify.app";
+let productionHtml = html.replaceAll("https://haze.ksmostofa576.workers.dev", publicOrigin);
+productionHtml = productionHtml.replace(
+  "</head>",
+  '<link rel="stylesheet" href="/how-to-play.css"/>\n</head>',
+);
+productionHtml = productionHtml.replace(
+  "</body>",
+  '<script src="/how-to-play.js"></script>\n</body>',
+);
+
+if (!productionHtml.includes('href="/how-to-play.css"') || !productionHtml.includes('src="/how-to-play.js"')) {
+  throw new Error("HAZE build verification failed: How to Play enhancement was not injected.");
+}
+if (!productionHtml.includes(`<link rel="canonical" href="${publicOrigin}/"/>`)) {
+  throw new Error("HAZE build verification failed: public canonical domain was not applied.");
+}
 
 rmSync("dist", { recursive: true, force: true });
 cpSync("public", "dist", { recursive: true });
+writeFileSync("dist/index.html", productionHtml);
 mkdirSync("dist/vendor", { recursive: true });
 copyFileSync(threeSource, "dist/vendor/three.min.js");
 
-console.log(`HAZE build verified: ${html.length} chars → dist/index.html`);
+console.log(`HAZE build verified: ${html.length} source chars → dist/index.html`);
