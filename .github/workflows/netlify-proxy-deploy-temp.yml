@@ -1,0 +1,22 @@
+name: Temporary Netlify proxy deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Deploy proxy-only production site
+        run: >-
+          npx -y @netlify/mcp@latest
+          --site-id 069cfe6b-90f4-4112-82dc-cb2b90b14002
+          --proxy-path "https://netlify-mcp.netlify.app/proxy/eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..BIiyKfWaEDzUiSLX.ueN_uRDymeDO6T5iexpD1tS0Mo2JfVqGSYw8oa4Q3IL_qDq7v6I4QpZnEtoZr4CzETTiK_tCZ0MqiH89xiLdETjxYRfC5cZxT5LHwiozpCCi3oB5YIwMHD1yhjV_xsQmnffI5NY-oRI_AIgG_9NMTPSUpRK_uP5zr-WJ9e7eNtZeSVE6QTIAzA2g8fpIinGqgf2Y5GiIL16shgoXyDBeCcIsYsjmsRwnrtus82fT6CZBixY5UbaRctR_z2M0hplIJKgvrzQ9oVtQEY9sRG38En81qpfKZWWXqifH6Z8ximQS_XtPGVUyG5UaXS_0m2hXn554MfwGeiN6mrtZ-LrzyXKYBycep5pRbp74PUUH_fBmJe6FbhTjEBMYBibBZCJrBHimU5YQ.fLfT6XvrTQ2WygaEb7z6oA"
