@@ -29,11 +29,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Verify one Cloudflare app through both hostnames
+        shell: bash
         run: |
           set -euo pipefail
 
           CLOUDFLARE="https://haze.ksmostofa576.workers.dev"
           NETLIFY="https://survivethehaze.netlify.app"
+
+          fail_response() {
+            LABEL="$1"; STEP="$2"; STATUS="$3"; FILE="$4"
+            echo "::error::$LABEL $STEP failed with HTTP $STATUS"
+            [ -f "$FILE" ] && { echo "----- response -----"; head -c 4000 "$FILE"; echo; echo "--------------------"; }
+            exit 1
+          }
+
+          get_json() {
+            LABEL="$1"; STEP="$2"; URL="$3"; ORIGIN="$4"; OUT="$5"; shift 5
+            STATUS=$(curl -sS -o "$OUT" -w '%{http_code}' -H "Origin: $ORIGIN" "$@" "$URL" || true)
+            [ "$STATUS" = "200" ] || fail_response "$LABEL" "$STEP" "$STATUS" "$OUT"
+          }
 
           verify_host() {
             BASE="$1"
@@ -42,44 +56,59 @@ jobs:
             HOME="/tmp/${LABEL}-home.html"
             CONFIG="/tmp/${LABEL}-config.json"
             BOARD="/tmp/${LABEL}-board.json"
+            START_FILE="/tmp/${LABEL}-start.json"
             PLAYER="ci-${LABEL}-$(date +%s)-abcdefghijklmnop"
 
+            echo "=== waiting for $LABEL production page: $BASE ==="
+            ready=0
             for attempt in {1..24}; do
-              if curl -fsS -H 'cache-control: no-cache' "$BASE/" -o "$HOME" \
+              STATUS=$(curl -sS -o "$HOME" -w '%{http_code}' -H 'cache-control: no-cache' "$BASE/" || true)
+              if [ "$STATUS" = "200" ] \
                 && grep -q 'BUILD_ID="haze-20260811-global-v1"' "$HOME" \
                 && grep -q 'href="/how-to-play.css"' "$HOME" \
                 && grep -q 'src="/how-to-play.js"' "$HOME" \
                 && grep -q 'requestGameFullscreen' "$HOME" \
+                && grep -q 'PERF_PROFILE' "$HOME" \
                 && grep -q 'apiJSON("/api/run/start"' "$HOME" \
                 && ! grep -q 'API_ORIGIN' "$HOME" \
                 && ! grep -q 'window.__HAZE' "$HOME" \
                 && ! grep -q 'atob(' "$HOME"; then
+                ready=1
+                echo "$LABEL production shell is current on attempt $attempt"
                 break
               fi
-              if [ "$attempt" -eq 24 ]; then
-                echo "$LABEL production page failed verification" >&2
-                exit 1
-              fi
+              echo "$LABEL not current yet (attempt $attempt, HTTP $STATUS)"
               sleep 8
             done
+            [ "$ready" = "1" ] || fail_response "$LABEL" "production page readiness" "$STATUS" "$HOME"
 
-            curl -fsS "$BASE/how-to-play.js" -o "/tmp/${LABEL}-howto.js"
-            curl -fsS "$BASE/how-to-play.css" -o "/tmp/${LABEL}-howto.css"
-            grep -q 'Desktop' "/tmp/${LABEL}-howto.js"
-            grep -q 'Mobile' "/tmp/${LABEL}-howto.js"
-            grep -q 'ctlModeGrid' "/tmp/${LABEL}-howto.css"
+            for asset in how-to-play.js how-to-play.css; do
+              FILE="/tmp/${LABEL}-${asset}"
+              STATUS=$(curl -sS -o "$FILE" -w '%{http_code}' "$BASE/$asset" || true)
+              [ "$STATUS" = "200" ] || fail_response "$LABEL" "$asset" "$STATUS" "$FILE"
+            done
+            grep -q 'Desktop' "/tmp/${LABEL}-how-to-play.js" || { echo "::error::$LABEL how-to-play.js missing Desktop"; exit 1; }
+            grep -q 'Mobile' "/tmp/${LABEL}-how-to-play.js" || { echo "::error::$LABEL how-to-play.js missing Mobile"; exit 1; }
+            grep -q 'ctlModeGrid' "/tmp/${LABEL}-how-to-play.css" || { echo "::error::$LABEL how-to-play.css missing ctlModeGrid"; exit 1; }
 
-            # This is the real browser path: every API request uses the hostname
-            # visible in the address bar. Netlify must proxy these requests to
-            # the one Cloudflare backend without CORS or a second API client.
-            curl -fsS -H "Origin: $ORIGIN" "$BASE/api/config" -o "$CONFIG"
-            curl -fsS -H "Origin: $ORIGIN" -H "X-Haze-Player: $PLAYER" "$BASE/api/leaderboard" -o "$BOARD"
-            START=$(curl -fsS -X POST "$BASE/api/run/start" \
+            echo "=== $LABEL API config ==="
+            get_json "$LABEL" "GET /api/config" "$BASE/api/config" "$ORIGIN" "$CONFIG"
+            cat "$CONFIG"; echo
+
+            echo "=== $LABEL leaderboard ==="
+            get_json "$LABEL" "GET /api/leaderboard" "$BASE/api/leaderboard" "$ORIGIN" "$BOARD" -H "X-Haze-Player: $PLAYER"
+            cat "$BOARD"; echo
+
+            echo "=== $LABEL ranked start ==="
+            STATUS=$(curl -sS -o "$START_FILE" -w '%{http_code}' -X POST "$BASE/api/run/start" \
               -H "Origin: $ORIGIN" \
               -H 'content-type: application/json' \
-              --data "{\"playerId\":\"$PLAYER\",\"build\":\"haze-20260811-global-v1\"}")
-            node - "$START" <<'NODE'
-          const data = JSON.parse(process.argv[2]);
+              --data "{\"playerId\":\"$PLAYER\",\"build\":\"haze-20260811-global-v1\"}" || true)
+            [ "$STATUS" = "200" ] || fail_response "$LABEL" "POST /api/run/start" "$STATUS" "$START_FILE"
+            cat "$START_FILE"; echo
+            node - "$START_FILE" <<'NODE'
+          const fs = require('node:fs');
+          const data = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
           if (typeof data.runToken !== 'string' || data.runToken.length !== 64) throw new Error('ranked run start token missing');
           if (!Number.isFinite(data.startedAt)) throw new Error('ranked run start timestamp missing');
           NODE
@@ -87,7 +116,11 @@ jobs:
 
           verify_host "$CLOUDFLARE" "$CLOUDFLARE" "cloudflare"
           verify_host "$NETLIFY" "$NETLIFY" "netlify"
-          cmp /tmp/cloudflare-home.html /tmp/netlify-home.html
+
+          cmp /tmp/cloudflare-home.html /tmp/netlify-home.html || {
+            echo "::error::Cloudflare and Netlify are not serving the same frontend bytes"
+            exit 1
+          }
 
           node - <<'NODE'
           const fs = require('node:fs');
