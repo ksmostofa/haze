@@ -3,15 +3,12 @@ import worker, { Leaderboard } from "./worker.js";
 export { Leaderboard };
 
 const PUBLIC_ORIGIN = "https://survivethehaze.netlify.app";
-const CORS_HEADERS = {
-  "access-control-allow-origin": PUBLIC_ORIGIN,
-  "access-control-allow-methods": "GET,POST,OPTIONS",
-  "access-control-allow-headers": "Content-Type,X-Haze-Player",
-  "access-control-max-age": "86400",
-  "vary": "Origin",
-};
 
-function normalizePublicApiRequest(request) {
+// Netlify is only a public hostname/reverse proxy. When its browser Origin is
+// forwarded to the Cloudflare Worker, normalize the request URL so the single
+// backend's same-origin validation and optional Turnstile hostname validation
+// see the public origin the player actually used.
+function normalizePublicProxyRequest(request) {
   const url = new URL(request.url);
   const origin = request.headers.get("origin");
   if (!url.pathname.startsWith("/api/") || origin !== PUBLIC_ORIGIN) return request;
@@ -22,9 +19,12 @@ function normalizePublicApiRequest(request) {
   return new Request(publicUrl, request);
 }
 
-function withPublicCors(response) {
+function withDeliveryHeaders(response) {
   const headers = new Headers(response.headers);
-  for (const [name, value] of Object.entries(CORS_HEADERS)) headers.set(name, value);
+  const type = headers.get("content-type") || "";
+  // Never let a browser keep an obsolete game shell after a production fix.
+  // Versioned/static assets can still use the platform's normal caching.
+  if (type.includes("text/html")) headers.set("cache-control", "no-cache, no-store, must-revalidate");
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -34,14 +34,6 @@ function withPublicCors(response) {
 
 export default {
   async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const publicApiRequest = url.pathname.startsWith("/api/") && request.headers.get("origin") === PUBLIC_ORIGIN;
-
-    if (publicApiRequest && request.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
-    }
-
-    const response = await worker.fetch(normalizePublicApiRequest(request), env, ctx);
-    return publicApiRequest ? withPublicCors(response) : response;
+    return withDeliveryHeaders(await worker.fetch(normalizePublicProxyRequest(request), env, ctx));
   },
 };
