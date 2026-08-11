@@ -33,7 +33,16 @@ for (const asset of ["public/how-to-play.css", "public/how-to-play.js"]) {
 }
 
 const publicOrigin = "https://survivethehaze.netlify.app";
-let productionHtml = html.replaceAll("https://haze.ksmostofa576.workers.dev", publicOrigin);
+const apiOrigin = "https://haze.ksmostofa576.workers.dev";
+let productionHtml = html.replaceAll(apiOrigin, publicOrigin);
+productionHtml = productionHtml.replace(
+  'const BUILD_ID="haze-20260811-global-v1";',
+  `const BUILD_ID="haze-20260811-global-v1";\nconst API_ORIGIN="${apiOrigin}";`,
+);
+productionHtml = productionHtml.replace(
+  "const res=await fetch(url,{...opts,headers});",
+  'const res=await fetch(url.startsWith("/api/")?API_ORIGIN+url:url,{...opts,headers});',
+);
 productionHtml = productionHtml.replace(
   "</head>",
   '<link rel="stylesheet" href="/how-to-play.css"/>\n</head>',
@@ -43,11 +52,14 @@ productionHtml = productionHtml.replace(
   '<script src="/how-to-play.js"></script>\n</body>',
 );
 
-if (!productionHtml.includes('href="/how-to-play.css"') || !productionHtml.includes('src="/how-to-play.js"')) {
-  throw new Error("HAZE build verification failed: How to Play enhancement was not injected.");
-}
-if (!productionHtml.includes(`<link rel="canonical" href="${publicOrigin}/"/>`)) {
-  throw new Error("HAZE build verification failed: public canonical domain was not applied.");
+for (const marker of [
+  'href="/how-to-play.css"',
+  'src="/how-to-play.js"',
+  `const API_ORIGIN="${apiOrigin}";`,
+  'url.startsWith("/api/")?API_ORIGIN+url:url',
+  `<link rel="canonical" href="${publicOrigin}/"/>`,
+]) {
+  if (!productionHtml.includes(marker)) throw new Error(`HAZE build verification failed: missing production transform ${marker}`);
 }
 
 rmSync("dist", { recursive: true, force: true });
