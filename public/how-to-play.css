@@ -1,0 +1,19 @@
+#controls .ctlModeGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;width:min(780px,86vw);margin-top:8px;align-items:stretch;transform:none}
+#controls .ctlPanel{border:1px solid rgba(255,255,255,.16);background:rgba(5,7,9,.34);padding:18px 20px;min-width:0}
+#controls .ctlPlatform{font:900 13px Arial,sans-serif;letter-spacing:.3em;color:#f2f2f2;text-transform:uppercase;margin-bottom:13px}
+#controls .ctlItems{display:grid;grid-template-columns:minmax(92px,.75fr) minmax(0,1fr);column-gap:18px;row-gap:9px;align-items:center}
+#controls .ctlInput{font:900 10px Arial,sans-serif;letter-spacing:.13em;color:#e7e7e7;text-transform:uppercase;white-space:nowrap}
+#controls .ctlAction{font:700 10px Arial,sans-serif;letter-spacing:.14em;color:#85898e;text-transform:uppercase;min-width:0}
+#controls .ctlHelpNote{font:700 9px Arial,sans-serif;letter-spacing:.18em;color:#74787d;text-transform:uppercase;margin-top:14px;max-width:780px;line-height:1.7}
+#controls .ctlHelpNote strong{color:#b9bdc1;font-weight:900}
+@media (max-width:900px),(pointer:coarse){
+  #controls .menuPad{top:50%;}
+  #controls .ctlModeGrid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(86vw,760px);transform:none!important}
+  #controls .ctlPanel{padding:12px 14px}
+  #controls .ctlPlatform{font-size:10px;margin-bottom:9px}
+  #controls .ctlItems{grid-template-columns:minmax(76px,.72fr) minmax(0,1fr);column-gap:10px;row-gap:6px}
+  #controls .ctlInput,#controls .ctlAction{font-size:8px;letter-spacing:.1em}
+  #controls .ctlHelpNote{font-size:8px;margin-top:8px;line-height:1.45}
+  #controls .btn{margin-top:12px;padding:10px 28px}
+}
+@media (max-width:640px){#controls .ctlModeGrid{grid-template-columns:1fr;max-height:58vh;overflow:auto}}
