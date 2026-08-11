@@ -8,53 +8,92 @@ A first-person Three.js survival game. Clear six waves before dawn and compete f
 
 ## Architecture
 
-HAZE has one application and one backend:
+HAZE has one application, one frontend build, one API, and one leaderboard:
 
 ```text
-GitHub source
-    ↓
-Cloudflare Worker + Static Assets + Durable Object
-    ↓
-Netlify 200 rewrite (public hostname only)
-    ↓
+GitHub canonical source
+          ↓
+Cloudflare Worker + Static Assets + SQLite Durable Object
+          ↑
+Netlify 200 reverse proxy (public hostname only)
+          ↑
 https://survivethehaze.netlify.app
 ```
 
 - **GitHub** is the canonical source.
-- **Cloudflare** builds and serves the actual frontend, API, ranked validation, and global leaderboard.
-- **Netlify** publishes only `netlify-proxy/_redirects`; it does not keep a second game build, function, database, or leaderboard.
-- The visible public hostname remains `survivethehaze.netlify.app` while Netlify fetches the Cloudflare frontend behind the scenes.
-- Browser API requests go directly to the Cloudflare Worker. `src/entry.js` permits only the public Netlify origin and supplies the required CORS/preflight response, preserving real client IPs for Cloudflare rate limiting.
-- The production canonical/social URL is the Netlify public hostname.
-
-Netlify officially supports external 200 rewrites for this proxy pattern. The address bar stays on the Netlify URL while the response comes from the external origin.
+- **Cloudflare** builds and serves the real frontend, API, ranked validation, and global leaderboard.
+- **Netlify** publishes only a tiny reverse-proxy shell. It does not keep a second HAZE frontend, function, database, or leaderboard.
+- The public address stays `survivethehaze.netlify.app`; Netlify transparently fetches the same Cloudflare application behind it.
+- The browser always uses relative same-origin `/api/*` URLs. On the Netlify hostname those requests are reverse-proxied to the same Cloudflare Worker, so there is no second API client and no browser CORS dependency.
+- `src/entry.js` normalizes the proxied Netlify request URL before the one backend performs origin and optional Turnstile hostname validation.
 
 ## Game delivery
 
-The authored game remains one real file:
+The authored game remains one real source file:
 
 ```text
 public/index.html
 ```
 
-`build.mjs` validates it and produces the Cloudflare production build. The build also:
+The production pipeline is deterministic:
+
+```text
+public/index.html
+    ↓ build.mjs
+one adaptive production HTML
+    ↓ optimize.mjs
+pooled / allocation-light production HTML
+    ↓
+Cloudflare Static Assets
+```
+
+The build also:
 
 - self-hosts pinned Three.js at `/vendor/three.min.js`
-- sets the public canonical hostname to `survivethehaze.netlify.app`
-- points ranked API calls at the Cloudflare Worker
+- sets the public canonical/social hostname to `survivethehaze.netlify.app`
+- keeps ranked API calls relative as `/api/*`
 - injects the responsive Desktop/Mobile How to Play guide
+- rejects obsolete Base64/debug loaders during verification
 
 There is no browser-side Base64 loader and no `atob()` bootstrap.
 
+## Performance
+
+HAZE uses one adaptive frontend rather than separate desktop/mobile versions.
+
+On touch or lower-resource hardware the production build automatically reduces only expensive rendering work while preserving gameplay, enemy stats, hit volumes, waves, controls, and ranked logic:
+
+- lower render pixel ratio
+- antialiasing disabled on low-power mode
+- expensive realtime shadows disabled on low-power mode
+- reduced ground/forest/grass/particle/rain density
+- reduced enemy primitive tessellation while preserving silhouettes
+- adaptive render resolution when sustained frame rate drops
+
+The hot gameplay path is also allocation-light:
+
+- player movement no longer creates temporary vectors every frame
+- cabin collision sweeps avoid temporary arrays
+- enemy doorway routing reuses a scratch route instead of allocating objects/closures per enemy per frame
+- wave counts avoid temporary filtered arrays
+- hit particles and shock rings use a reusable pool instead of allocating GPU/JS resources for every strike
+- unique enemy geometries are explicitly released after death/restart/title cleanup
+
+These changes target both sustained GPU load and periodic garbage-collection/GPU-driver hitches.
+
 ## Controls
 
-The in-game **How to Play** screen now documents both modes.
+The in-game **How to Play** screen documents both modes.
 
 **Desktop:** WASD move, mouse look/aim, left click attack, Shift sprint, 1–5 or wheel select weapon, R cycle weapon, Esc pause.
 
 **Mobile:** left stick move, right-side drag look/aim, Attack strike, Sprint run, Weapon switch, Ⅱ pause, landscape recommended.
 
 Control mode is detected automatically and can be overridden in Settings.
+
+## Fullscreen and mobile
+
+Browsers require a user gesture before fullscreen. HAZE therefore opens with **Enter Fullscreen**, which requests fullscreen, landscape orientation where supported, and a screen wake lock. A Fullscreen control remains in Settings, and portrait phones retain the rotate-device fallback.
 
 ## Ranked protocol
 
@@ -68,10 +107,6 @@ Control mode is detected automatically and can be overridden in Settings.
 Ranking order is fastest time, then higher server-derived score, then earlier achievement. The public board returns the Top 10. Exact ranks are calculated inside the cached Top 100; players below that receive `100+` to avoid expensive full-table scans.
 
 This is pragmatic anti-cheat for a downloadable browser game rather than server-authoritative combat. It blocks trivial timer edits, client-supplied scores, one-request fake wins, token replay, timing-after-victory, malformed six-wave proofs, and casual automated spam.
-
-## Fullscreen and mobile
-
-Browsers require a user gesture before fullscreen. HAZE therefore opens with **Enter Fullscreen**, which requests fullscreen, landscape orientation where supported, and a screen wake lock. A Fullscreen control remains in Settings, and portrait phones retain the rotate-device fallback.
 
 ## Privacy and storage
 
@@ -88,19 +123,23 @@ public/
   _headers
   assets/                icons / social art
 netlify-proxy/
-  _redirects             all paths → Cloudflare origin, 200 rewrite
+  _redirects             all public paths → Cloudflare, 200 rewrite
+  _headers               prevent a stale public HTML shell
 src/
-  entry.js               public Netlify-origin CORS/hostname adapter
+  entry.js               Netlify proxy-origin request normalizer
   protocol.js            ranked proof + name validation
   worker.js              API + SQLite Durable Object
 test/
   protocol.test.js       anti-cheat / quota tests
-  public-origin.test.js  Netlify/Cloudflare architecture regression tests
+  public-origin.test.js  single-app/proxy architecture regression tests
 .github/workflows/
-  verify.yml             build + browser-realistic production smoke test
-build.mjs                deterministic production build
-netlify.toml             publishes only netlify-proxy/
-wrangler.jsonc           Cloudflare Worker/assets/DO configuration
+  verify.yml             build + production smoke test
+build.mjs                deterministic adaptive production build
+optimize.mjs             pooled FX / low-device geometry / GPU cleanup
+netlify.toml              publishes only netlify-proxy/
+package.json
+package-lock.json
+wrangler.jsonc            Cloudflare Worker/assets/DO configuration
 ```
 
 ## Verification
@@ -110,19 +149,22 @@ npm ci
 npm run check
 ```
 
-CI additionally tests the live production flow with real browser-style headers. It verifies that:
+Permanent CI additionally verifies both production hostnames. It requires the live HTML to contain the adaptive render profile, allocation-light movement/routing, pooled impact FX, and enemy GPU cleanup. It also verifies:
 
 - Cloudflare and Netlify return identical production HTML
+- both responses force revalidation rather than allowing a stale game shell
 - Desktop and Mobile How to Play assets are live
-- the obsolete `atob()` loader is absent
-- Netlify-origin CORS preflight succeeds
-- `/api/config` and `/api/leaderboard` succeed
-- `POST /api/run/start` succeeds with `Origin: https://survivethehaze.netlify.app`
+- the obsolete `atob()`/debug loaders are absent
+- the browser client contains no separate `API_ORIGIN`
+- `/api/config` and `/api/leaderboard` succeed through each visible hostname
+- `POST /api/run/start` succeeds through each visible hostname with its real browser `Origin`
 - both hostnames report the same season and protection mode
+
+The production/runtime npm dependency audit is currently clean. Development test tooling is pinned to a patched Vitest release.
 
 ## Turnstile
 
-Turnstile is optional on top of verified-run protection. When `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET` are configured, `/api/config` reports `turnstile+verified-run`. The public-origin adapter normalizes the Netlify hostname for server-side Turnstile hostname validation. Without Turnstile, server timing, proof validation, single-use completion tokens, validation, and rate limiting remain active.
+Turnstile is optional on top of verified-run protection. When `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET` are configured, `/api/config` reports `turnstile+verified-run`. The Netlify request normalizer preserves public-hostname validation for this flow. Without Turnstile, server timing, proof validation, single-use completion tokens, validation, and rate limiting remain active.
 
 ## Public repository
 
