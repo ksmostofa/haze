@@ -15,9 +15,4 @@ jobs:
         with:
           node-version: '22'
       - run: node scripts/analyze-spectrum.mjs
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: spectrum-js
-          path: customizer.min.js
-          if-no-files-found: ignore
+      - run: node scripts/probe-spectrum-assets.mjs
