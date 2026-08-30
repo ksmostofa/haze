@@ -1,0 +1,41 @@
+name: Deploy BrandMyStanley preview
+
+on:
+  push:
+    branches: [brandmystanley-live]
+    paths:
+      - 'brandmystanley/**'
+      - '.github/workflows/deploy-brandmystanley-worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy dedicated preview Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: deploy brandmystanley/cloudflare-worker.js --name brandmystanley-preview --compatibility-date 2026-08-30
+      - name: Verify public preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://brandmystanley-preview.ksmostofa576.workers.dev'
+          for i in {1..20}; do
+            code=$(curl -sS -L -o /tmp/page.html -w '%{http_code}' "$URL" || true)
+            if [ "$code" = '200' ] && grep -q 'BrandMyStanley.com' /tmp/page.html && grep -q 'One cup.' /tmp/page.html; then
+              echo "Verified $URL"
+              exit 0
+            fi
+            echo "Attempt $i: HTTP $code"
+            sleep 5
+          done
+          echo 'Preview verification failed'
+          cat /tmp/page.html || true
+          exit 1
