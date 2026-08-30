@@ -1,3 +1,4 @@
+// Dedicated preview worker; does not touch the production HAZE worker.
 const SOURCE = 'https://raw.githubusercontent.com/ksmostofa/haze/brandmystanley-live/brandmystanley/index.html';
 
 export default {
