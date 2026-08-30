@@ -1,0 +1,20 @@
+name: Verify BrandMyStanley live preview
+on:
+  push:
+    branches: [brandmystanley-live]
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for CDN
+        run: sleep 8
+      - name: Verify live preview
+        run: |
+          set -eux
+          URL='https://raw.githack.com/ksmostofa/haze/brandmystanley-live/brandmystanley/index.html'
+          curl -fL --retry 5 --retry-delay 3 "$URL" -o /tmp/page.html
+          grep -q 'BrandMyStanley.com' /tmp/page.html
+          grep -q 'One cup.' /tmp/page.html
+          echo "LIVE_URL=$URL"
+          wc -c /tmp/page.html
