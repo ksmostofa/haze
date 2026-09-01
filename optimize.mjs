@@ -86,7 +86,7 @@ function setTile(out,model,action,dir,frame){
 function normalizeRig(root){
   root.updateMatrixWorld(true);const box=new THREE.Box3().setFromObject(root),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3()),s=2.55/(size.y||1);
   root.scale.setScalar(s);root.position.set(-center.x*s,-box.min.y*s,-center.z*s);root.updateMatrixWorld(true);
-  root.traverse(o=>{if(o.isMesh){o.castShadow=false;o.receiveShadow=false;o.frustumCulled=true;const mats=Array.isArray(o.material)?o.material:[o.material];for(const mat of mats)if(mat){if(mat.color)mat.color.multiplyScalar(.62);if(mat.emissive)mat.emissive.multiplyScalar(.025);mat.emissiveIntensity=Math.min(mat.emissiveIntensity||0,.025);mat.metalness=0;mat.roughness=Math.max(mat.roughness||0,.88);mat.needsUpdate=true;}}});return root;
+  const hazeLift=new THREE.Color(0x5b635f);root.traverse(o=>{if(o.isMesh){o.castShadow=false;o.receiveShadow=false;o.frustumCulled=true;const mats=Array.isArray(o.material)?o.material:[o.material];for(const mat of mats)if(mat){if(mat.color){mat.color.multiplyScalar(.78);mat.color.lerp(hazeLift,.14);}if(mat.emissive)mat.emissive.multiplyScalar(.025);mat.emissiveIntensity=Math.min(mat.emissiveIntensity||0,.025);mat.metalness=0;mat.roughness=Math.max(mat.roughness||0,.88);mat.needsUpdate=true;}}});return root;
 }
 function cloneRig(source){
   const root=THREE.SkeletonUtils&&THREE.SkeletonUtils.clone?THREE.SkeletonUtils.clone(source):source.clone(true);
@@ -128,6 +128,10 @@ function cloneEnemyVisual(template){
 }
 function attachEnemyProxy(root,variant){
   const u=root.userData,p=new THREE.Group();p.name="enemyLodProxy";
+  // Legs live directly on the enemy root while the torso and arms live under
+  // the spine group; keep both sets addressable so a rig swap cannot leave dark bars.
+  u.proceduralRoots=root.children.slice();
+  u.proceduralSpineChildren=u.spine.children.slice();
   const model=variant%3,mat=zombieAtlasMaterials[model]||new THREE.MeshBasicMaterial({color:0x25272b,transparent:true,opacity:0,depthWrite:false});
   const mesh=new THREE.Mesh(zombiePlaneGeo,mat);mesh.name="zombieImpostor";mesh.userData.tile=tileFor(model,"idle",0,0);mesh.userData.model=model;mesh.renderOrder=2;
   mesh.onBeforeRender=()=>{const active=mesh.material,shader=active.userData&&active.userData.atlasShader;if(shader)shader.uniforms.atlasTile.value.copy(mesh.userData.tile);};
@@ -138,7 +142,11 @@ function setEnemyLOD(root,simple){
   const rig= u.rigVisual,hasRig=!!u.rigReady,hasAtlas=!!zombieAtlasMaterials[variantForRoot(root)%3];
   p.visible=simple&&hasAtlas;
   if(rig)rig.visible=!simple&&hasRig;
-  for(const child of u.spine.children)if(child!==p&&child!==rig)child.visible=!hasRig&&!simple||!hasAtlas&&simple;
+  const proceduralVisible=!hasRig&&!simple||!hasAtlas&&simple;
+  // The spine group also owns the proxy and imported rig, so leave that
+  // container visible and toggle only its original procedural children.
+  for(const child of u.proceduralRoots||[])if(child!==u.spine&&child!==rig)child.visible=proceduralVisible;
+  for(const child of u.proceduralSpineChildren||[])if(child!==p&&child!==rig)child.visible=proceduralVisible;
 }
 function variantForRoot(root){return root.userData.visualVariant==null?0:root.userData.visualVariant;}
 function upgradeImpostorOnRoot(root,variant){
@@ -157,8 +165,8 @@ function poseDoomRig(root,action,phase,deathT=0){
   const b=u.doomParts,s=Math.sin(phase*6.283),c=Math.cos(phase*6.283);
   turnDoom(b.lUpper,"y",.74);turnDoom(b.rUpper,"y",-.74);turnDoom(b.lFore,"x",-.2);turnDoom(b.rFore,"x",-.2);turnDoom(b.spine,"x",.16);turnDoom(b.spine1,"x",.1);
   if(action==="idle"){turnDoom(b.spine2,"z",s*.035);turnDoom(b.head,"z",-s*.04);turnDoom(b.neck,"y",c*.045);turnDoom(b.lUpper,"z",s*.1);turnDoom(b.rUpper,"z",-s*.1);}
-  else if(action==="walk"){turnDoom(b.lThigh,"x",s*.38);turnDoom(b.rThigh,"x",-s*.38);turnDoom(b.lCalf,"x",Math.max(0,-s)*.45);turnDoom(b.rCalf,"x",Math.max(0,s)*.45);turnDoom(b.lUpper,"z",-.18+s*.22);turnDoom(b.rUpper,"z",.18-s*.22);turnDoom(b.lFore,"x",-.28);turnDoom(b.rFore,"x",-.28);turnDoom(b.spine,"z",s*.045);}
-  else if(action==="attack"){turnDoom(b.spine,"x",.3);turnDoom(b.spine1,"x",.18);turnDoom(b.spine2,"x",.1);turnDoom(b.lUpper,"y",.35);turnDoom(b.rUpper,"y",-.35);turnDoom(b.lUpper,"z",-.16);turnDoom(b.rUpper,"z",.16);turnDoom(b.lFore,"x",-.52);turnDoom(b.rFore,"x",-.52);turnDoom(b.lFore,"z",-.18);turnDoom(b.rFore,"z",.18);turnDoom(b.head,"x",-.08);}
+  else if(action==="walk"){turnDoom(b.lThigh,"x",s*.62);turnDoom(b.rThigh,"x",-s*.62);turnDoom(b.lCalf,"x",Math.max(0,-s)*.72);turnDoom(b.rCalf,"x",Math.max(0,s)*.72);turnDoom(b.lUpper,"y",s*.16);turnDoom(b.rUpper,"y",-s*.16);turnDoom(b.lUpper,"z",-.18+s*.34);turnDoom(b.rUpper,"z",.18-s*.34);turnDoom(b.lFore,"x",-.36+Math.max(0,s)*.16);turnDoom(b.rFore,"x",-.36+Math.max(0,-s)*.16);turnDoom(b.spine,"z",s*.065);turnDoom(b.spine1,"z",-s*.045);turnDoom(b.spine2,"y",s*.055);turnDoom(b.head,"z",-s*.06);turnDoom(b.head,"y",-s*.04);}
+  else if(action==="attack"){turnDoom(b.spine,"x",.3);turnDoom(b.spine1,"x",.18);turnDoom(b.spine2,"x",.1);turnDoom(b.lUpper,"y",-.3);turnDoom(b.rUpper,"y",.3);turnDoom(b.lUpper,"z",-.25);turnDoom(b.rUpper,"z",.25);turnDoom(b.lFore,"x",-.68);turnDoom(b.rFore,"x",-.68);turnDoom(b.lFore,"z",-.22);turnDoom(b.rFore,"z",.22);turnDoom(b.head,"x",-.08);}
   else if(action==="hit"){turnDoom(b.spine,"z",.13);turnDoom(b.spine1,"z",.1);turnDoom(b.head,"z",-.16);turnDoom(b.lUpper,"y",.54);turnDoom(b.rUpper,"y",-.54);turnDoom(b.lUpper,"z",-.3);turnDoom(b.rUpper,"z",.3);turnDoom(b.lFore,"x",-.5);turnDoom(b.rFore,"x",-.5);}
   else if(action==="death"){const d=Math.min(1,deathT/.9);turnDoom(b.pelvis,"z",-d*.24);turnDoom(b.spine,"z",-d*.55);turnDoom(b.spine1,"z",-d*.32);turnDoom(b.spine,"x",d*.4);turnDoom(b.head,"x",d*.5);turnDoom(b.lThigh,"x",d*.32);turnDoom(b.rThigh,"x",-d*.18);turnDoom(b.lCalf,"x",d*.42);turnDoom(b.rCalf,"x",d*.22);turnDoom(b.lUpper,"y",.52);turnDoom(b.rUpper,"y",-.52);turnDoom(b.lUpper,"z",-d*.5);turnDoom(b.rUpper,"z",d*.5);}
 }
@@ -171,7 +179,7 @@ function setRigAction(root,action){
 function updateEnemyVisual(e,dt){
   const m=e.m,u=m.userData;if(!u.lodProxy)return;const simple=u.lodSimple,model=u.rigModel==null?e.variant%3:u.rigModel;
   if(simple){const face=Math.atan2(camera.position.x-m.position.x,camera.position.z-m.position.z);u.lodProxy.rotation.y=angDelta(0,face-m.rotation.y);u.lodProxy.position.y=(1.25-u.soleOffset)*m.scale.x;const rel=angDelta(m.rotation.y,face),dir=((Math.round(rel/(Math.PI*2)*8)%8)+8)%8;const action=e.dead?"death":e.stun>0?"hit":e.lunge>0?"attack":e.inRange?"idle":"walk",frame=e.dead?Math.min(5,Math.floor(e.dying*6)):Math.floor(GS.time*8)%6;setTile(u.impostor.userData.tile,model,action,dir,frame);}
-  else if(u.rigReady){const action=e.dead?"death":e.stun>0?"hit":e.lunge>0?"attack":e.inRange?"idle":"walk";u.rigVisual.position.y=-u.soleOffset*m.scale.x;if(u.rigClips.length){setRigAction(m,action);u.rigMixer.update(dt);}else{u.rigAction=action;poseDoomRig(u.rigVisual,action,GS.time*.72+e.phase,e.dying);}}
+  else if(u.rigReady){const action=e.dead?"death":e.stun>0?"hit":e.lunge>0?"attack":e.inRange?"idle":"walk",phase=GS.time*.72+e.phase;u.rigVisual.position.y=-u.soleOffset*m.scale.x+(action==="walk"?Math.max(0,Math.sin(phase*6.283))*.055*m.scale.x:0);if(u.rigClips.length){setRigAction(m,action);u.rigMixer.update(dt);}else{u.rigAction=action;poseDoomRig(u.rigVisual,action,phase,e.dying);}}
 }
 function acquireEnemyVisual(variant){
   const root=enemyPools[variant].pop()||cloneEnemyVisual(enemyTemplates[variant]);
@@ -179,7 +187,10 @@ function acquireEnemyVisual(variant){
   root.visible=true;setEnemyLOD(root,true);return root;
 }
 function releaseEnemyVisual(root,variant){
-  root.position.set(0,0,0);root.rotation.set(0,0,0);root.scale.set(1,1,1);releaseRigOnRoot(root);root.traverse(o=>{o.visible=true;});
+  root.position.set(0,0,0);root.rotation.set(0,0,0);root.scale.set(1,1,1);releaseRigOnRoot(root);
+  for(const child of root.userData.proceduralRoots||[])child.visible=true;
+  for(const child of root.userData.proceduralSpineChildren||[])child.visible=true;
+  if(root.userData.lodProxy)root.userData.lodProxy.visible=false;
   setEnemyLOD(root,true);root.visible=false;enemyPools[variant].push(root);
 }
 for(let v=0;v<enemyTemplates.length;v++)enemyTemplates[v]=makeZombie("shambler",v);
