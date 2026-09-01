@@ -1,0 +1,26 @@
+{
+  "cellW": 128,
+  "cellH": 192,
+  "frames": 6,
+  "directions": 8,
+  "actions": [
+    "idle",
+    "walk",
+    "attack",
+    "hit",
+    "death"
+  ],
+  "atlas": {
+    "cols": 24,
+    "rows": 10,
+    "width": 3072,
+    "height": 1920
+  },
+  "models": {
+    "doom": {
+      "file": "zombie-doom-default.glb",
+      "atlas": "Zombie_doom_atlas.png",
+      "clips": {}
+    }
+  }
+}

@@ -430,6 +430,8 @@
 <div id="loading" role="status" aria-live="polite">Summoning the haze…</div>
 
 <script src="/vendor/three.min.js"></script>
+<script src="/vendor/GLTFLoader.js"></script>
+<script src="/vendor/SkeletonUtils.js"></script>
 <script>
 (function(){
 "use strict";
@@ -628,7 +630,7 @@ const BASE={amb:amb.intensity,hemi:hemi.intensity,key:key.intensity,expo:rendere
 (function sky(){
   // dark stormy vertical gradient dome
   const g=new THREE.SphereGeometry(400,24,16);
-  const m=new THREE.ShaderMaterial({side:THREE.BackSide,fog:false,
+  const m=new THREE.ShaderMaterial({side:THREE.BackSide,fog:false,depthWrite:false,
     uniforms:{top:{value:new THREE.Color(0x223744)},bot:{value:new THREE.Color(0x0a151b)}},
     vertexShader:"varying float h;void main(){h=normalize(position).y;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
     fragmentShader:"varying float h;uniform vec3 top;uniform vec3 bot;void main(){gl_FragColor=vec4(mix(bot,top,clamp(h*0.9+0.4,0.,1.)),1.);}"});
@@ -1141,6 +1143,114 @@ const ARCH_STATS=[
   {hp:.72,spd:1.48,dmg:.82,sc:.9,gait:"skitter"},{hp:1.05,spd:1.18,dmg:1.1,sc:1.1,gait:"bound"},
   {hp:1.3,spd:.7,dmg:1.32,sc:1.24,gait:"drag"},{hp:1.65,spd:.68,dmg:1.5,sc:1.48,gait:"boss"}
 ];
+
+/* ============================ POLYART ZOMBIES ============================
+   The free Polyart pack is used only for the enemy presentation. AI, hitboxes,
+   routing, damage and wave accounting remain the existing game systems. The
+   pack uses one small palette texture and pre-retargeted clips, so every clone
+   shares geometry, materials and animation data instead of loading a new mesh
+   per enemy. */
+const POLYART_ROOT="/assets/zombies/polyart/";
+const POLYART_MODEL_FILES=[
+  "ZombieFemale_A_joined.gltf","ZombieFemale_B_joined.gltf","ZombieFemale_C_joined.gltf",
+  "ZombieFemale_D_joined.gltf","ZombieFemale_E_joined.gltf",
+  "ZombieMale_A_joined.gltf","ZombieMale_B_joined.gltf","ZombieMale_C_joined.gltf",
+  "ZombieMale_D_joined.gltf","ZombieMale_E_joined.gltf"
+];
+const POLYART_ANIM_FILES={
+    female:{
+    idle:"ZombieFemale@idle_220f.gltf",idle2:"ZombieFemale@idle2_220f.gltf",
+    walk:"ZombieFemale@walk_64f.gltf",run:"ZombieFemale@running_58f.gltf",slowWalk:"ZombieFemale@slowWalk_85f.gltf",
+    attack:"ZombieFemale@attack_left_70f.gltf"
+  },
+  male:{
+    idle:"ZombieMale@idle_220f.gltf",idle2:"ZombieMale@idle2_220f.gltf",
+    walk:"ZombieMale@walk_64f.gltf",run:"ZombieMale@running_58f.gltf",slowWalk:"ZombieMale@slowWalk_85f.gltf",
+    attack:"ZombieMale@attack_left_70f.gltf"
+  }
+};
+const POLYART={ready:false,templates:[],clips:{female:{},male:{}},promise:null};
+function loadGltf(url){return new Promise((resolve,reject)=>new THREE.GLTFLoader().load(url,resolve,undefined,reject));}
+function tunePolyartScene(root){
+  root.traverse(n=>{
+    if(!n.isMesh)return;
+    n.castShadow=false;n.receiveShadow=false;
+    // The source skinned bounds are not updated for animated bones. Culling
+    // them makes a perfectly placed enemy disappear as soon as it walks.
+    // There are at most ten active enemies, so the stable choice is to keep
+    // these small character meshes in the draw list.
+    n.frustumCulled=n.isSkinnedMesh?false:true;
+    const mats=Array.isArray(n.material)?n.material:[n.material];
+    mats.forEach(mat=>{
+      if(!mat)return;
+      // Keep the source palette but push it into the existing blue-black HAZE
+      // grade. This prevents the imported characters from reading as bright toys.
+      if(mat.color)mat.color.multiplyScalar(.62);
+      mat.roughness=Math.max(.86,mat.roughness||0);
+      mat.metalness=0;
+      if(mat.emissive)mat.emissive.setRGB(.001,.0005,.0005);
+      if(mat.map){mat.map.anisotropy=1;mat.map.magFilter=THREE.LinearFilter;mat.map.minFilter=THREE.LinearMipmapLinearFilter;}
+    });
+  });
+  root.updateMatrixWorld(true);
+  // Fab's GLTF export uses centimetre-like source units. Normalize each rig
+  // to the same roughly 2.45-unit height as the old HAZE enemies before any
+  // clone is placed. Without this, the correct terrain placement still left
+  // a 163-unit character engulfing the forest and reading as a black mass.
+  const sourceBox=new THREE.Box3().setFromObject(root),sourceHeight=sourceBox.max.y-sourceBox.min.y;
+  if(Number.isFinite(sourceHeight)&&sourceHeight>0.01)root.scale.multiplyScalar(2.45/sourceHeight);
+  root.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(root);
+  if(Number.isFinite(box.min.y))root.position.y-=box.min.y;
+  root.updateMatrixWorld(true);
+  return root;
+}
+async function loadPolyartZombies(){
+  try{
+    const models=await Promise.all(POLYART_MODEL_FILES.map(file=>loadGltf(POLYART_ROOT+"rig-gltf_joined/"+file)));
+    POLYART.templates=models.map((g,i)=>({kind:i<5?"female":"male",scene:tunePolyartScene(g.scene)}));
+    for(const kind of ["female","male"]){
+      const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
+      const entries=Object.entries(POLYART_ANIM_FILES[kind]);
+      const loaded=await Promise.all(entries.map(async([role,file])=>[role,(await loadGltf(POLYART_ROOT+"animations-gltf/"+dir+"/"+file)).animations?.[0]]));
+      for(const [role,clip] of loaded){if(!clip)throw new Error("missing "+kind+" "+role+" animation");clip.name="polyart_"+kind+"_"+role;POLYART.clips[kind][role]=clip;}
+    }
+    POLYART.ready=true;
+    return true;
+  }catch(err){
+    console.warn("Polyart zombies unavailable; keeping procedural fallback.",err);
+    return false;
+  }
+}
+POLYART.promise=loadPolyartZombies();
+function playPolyartAction(u,name,force=false){
+  if(!u||!u.mixer)return;
+  const next=u.actions[name]||u.actions.idle||u.actions.idle2;if(!next)return;
+  if(!force&&u.activeAction===next)return;
+  if(u.activeAction&&u.activeAction!==next)u.activeAction.fadeOut(.12);
+  next.reset().setEffectiveWeight(1).setEffectiveTimeScale(name==="run"?1.12:1).fadeIn(.12).play();
+  u.activeAction=next;u.actionName=name;
+}
+function makePolyartZombie(type,variant){
+  const kind=variant<5?"female":"male",spec=POLYART.templates[variant];
+  if(!spec)return makeZombie(type,variant);
+  const visual=THREE.SkeletonUtils.clone(spec.scene),motionRoot=visual.getObjectByName("rig_CharRoot"),motionBase=motionRoot?motionRoot.position.clone():null,
+    mixer=new THREE.AnimationMixer(visual),clips=POLYART.clips[kind],actions={};
+  for(const [role,clip] of Object.entries(clips)){
+    const action=mixer.clipAction(clip,visual);action.enabled=true;
+    if(role==="attack"){action.setLoop(THREE.LoopOnce,1);action.clampWhenFinished=true;}
+    else action.setLoop(THREE.LoopRepeat,Infinity);
+    actions[role]=action;
+  }
+  const g=new THREE.Group();g.add(visual);
+  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,actions,activeAction:null,actionName:"",attackAnimT:0,
+    // Compatibility stubs keep the lighting/reveal code shared with the old
+    // procedural path without creating any extra visible geometry or lights.
+    fm:{userData:{anatomyState:{localReveal:0}}},eg:{intensity:0},variant,soleOffset:0,
+    archetype:ARCH_NAMES[variant],gait:ARCH_STATS[variant].gait};
+  playPolyartAction(g.userData,"idle");
+  return g;
+}
 // build one deterministic Cronenberg zombie for variant index v (0..9)
 function makeZombie(type,variant){
   const R=rng(1000+variant*97);
@@ -1427,7 +1537,7 @@ function spawnEnemy(entry){
   const variant=forcedVariant==null?(variantCounter++)%10:((forcedVariant%10)+10)%10;
   const base=TYPES[type],a=ARCH_STATS[variant];
   const c={hp:Math.round(base.hp*a.hp),spd:base.spd*a.spd,dmg:Math.round(base.dmg*a.dmg),score:Math.round(base.score*(.8+a.hp*.35)),sc:base.sc*a.sc,cd:base.cd};
-  const m=makeZombie(type,variant); m.scale.setScalar(c.sc);
+  const m=POLYART.ready?makePolyartZombie(type,variant):makeZombie(type,variant); m.scale.setScalar(c.sc);
   // spawn OUT OF THE FOREST at the clearing edge (all around), not next to player
   let x,z,t=0;
   do{const a=Math.random()*6.28,r=CLEARING_R-2+Math.random()*3;
@@ -1435,7 +1545,7 @@ function spawnEnemy(entry){
   const gy=surfaceHeight(x,z)+m.userData.soleOffset*c.sc;m.position.set(x,gy,z); scene.add(m);
   const visualWidth=variant===9?.68:variant===1||variant===8?.72:.62;
   enemies.push({m,type,c,variant,proofId:++enemyProofSeq,spawnedAtMs:Math.round(GS.time*1000),name:ARCH_NAMES[variant],hp:c.hp,maxhp:c.hp,spd:c.spd*(0.9+Math.random()*0.2),radius:Math.min(1.52,visualWidth*c.sc),
-    atkCd:0,flash:0,stun:0,phase:Math.random()*6.28,dead:false,dying:0,lunge:0,groan:2+Math.random()*6,
+    atkCd:0,flash:0,stun:0,phase:Math.random()*6.28,dead:false,dying:0,lunge:0,groan:2+Math.random()*6,attackAnimT:0,deathStarted:false,
     groundY:gy,doorState:"pursue",doorLane:null,doorSide:variant%2?-1:1,stuckTime:0,lastNavX:x,lastNavZ:z});
 }
 
@@ -1889,6 +1999,13 @@ function updateEnemies(dt){
   const rev=fleshReveal;
   for(let i=enemies.length-1;i>=0;i--){
     const e=enemies[i], m=e.m, u=m.userData;
+    if(u.polyart&&u.mixer){
+      u.mixer.update(dt);
+      // The source clips contain root-motion translations for standalone
+      // demos. HAZE owns horizontal movement and terrain height, so keep that
+      // root bone at its authored rest position to prevent drift or floating.
+      if(u.motionRoot&&u.motionBase)u.motionRoot.position.copy(u.motionBase);
+    }
     // Warm cabin light reveals an intruder immediately. Once it leaves, the
     // local reveal recedes and the global lightning reveal takes over again.
     const creatureInside=insideCabin(m.position.x,m.position.z);
@@ -1897,11 +2014,24 @@ function updateEnemies(dt){
     if(e.flash>0)e.flash-=dt;
     if(e.dead){
       e.dying+=dt; const t=Math.min(1,e.dying/0.9);
-      u.spine.rotation.x=0.12+t*1.3; m.position.y=e.groundY-t*1.0; m.scale.setScalar(e.c.sc*(1-t*0.12));
-      u.eg.intensity=0;u.eyes.forEach(x=>{const on=e.dying<.32;x.visible=on;x.userData.iris.visible=on;x.userData.pupil.visible=on;});
-      if(e.dying>1)   {scene.remove(m); enemies.splice(i,1);} continue;
+      if(u.polyart){
+        if(!e.deathStarted){e.deathStarted=true;playPolyartAction(u,"idle2",true);}
+        // A restrained root fall gives the sourced rig a readable death beat
+        // without importing a second, heavy death animation set.
+        m.rotation.z=THREE.MathUtils.lerp(0,(e.variant%2?-1:1)*1.18,t);
+        m.position.y=e.groundY-t*.06; m.scale.setScalar(e.c.sc*(1-t*0.08));
+      }else{
+        u.spine.rotation.x=0.12+t*1.3; m.position.y=e.groundY-t*1.0; m.scale.setScalar(e.c.sc*(1-t*0.12));
+        u.eg.intensity=0;u.eyes.forEach(x=>{const on=e.dying<.32;x.visible=on;x.userData.iris.visible=on;x.userData.pupil.visible=on;});
+      }
+      if(e.dying>1){scene.remove(m); enemies.splice(i,1);} continue;
     }
-    if(e.stun>0){e.stun-=dt;u.spine.rotation.z=Math.sin(e.stun*38)*.16;u.spine.rotation.x=.28;m.position.y=e.groundY;continue;}
+    if(e.stun>0){e.stun-=dt;
+      if(u.polyart){m.position.y=e.groundY;playPolyartAction(u,"idle",false);}
+      else {u.spine.rotation.z=Math.sin(e.stun*38)*.16;u.spine.rotation.x=.28;m.position.y=e.groundY;}
+      continue;
+    }
+    if(u.polyart){m.rotation.x=0;m.rotation.z=0;}
     // The creature's only target is the player. If the player is inside, use the
     // doorway as a path waypoint; walls and the cabin itself are never attacked.
     const dPlayer=Math.hypot(px-m.position.x,pz-m.position.z);
@@ -1927,41 +2057,56 @@ function updateEnemies(dt){
         const clear=Math.max(0,CABIN_DOOR_HALF-e.radius-.14);nxp=Math.max(-clear,Math.min(clear,nxp));
       }
       m.position.x=nxp;m.position.z=nzp;e.groundY=surfaceHeight(nxp,nzp)+u.soleOffset*e.c.sc;
-      e.phase+=dt*(3+e.spd*1.4); const sw=Math.sin(e.phase);
-      u.legL.rotation.x=sw*0.7; u.legR.rotation.x=-sw*0.7;
-      u.legL.userData.shin.rotation.x=Math.max(0,-sw)*0.6; u.legR.userData.shin.rotation.x=Math.max(0,sw)*0.6;
-      u.armL.rotation.x=-sw*0.4-0.35; u.armR.rotation.x=sw*0.4-0.35;
-      u.armL.userData.fore.rotation.x=-0.6; u.armR.userData.fore.rotation.x=-0.6;
-      for(let ai=2;ai<u.arms.length;ai++)u.arms[ai].rotation.x=Math.sin(e.phase*(1.1+ai*.12)+ai)*.55-.45;
-      u.spine.rotation.z=Math.sin(e.phase*0.5)*0.06; u.spine.rotation.x=0.12+Math.sin(e.phase)*0.03;
       m.position.y=e.groundY;
-      if(u.gait==="stilt"){u.legL.rotation.x=sw*.95;u.legR.rotation.x=-sw*.95;u.spine.rotation.z=Math.sin(e.phase*.5)*.11;}
-      else if(u.gait==="heavy"){u.legL.rotation.x=sw*.38;u.legR.rotation.x=-sw*.38;u.spine.rotation.x=.18+Math.abs(sw)*.07;}
-      else if(u.gait==="glide"){m.position.y=e.groundY+.08+Math.sin(e.phase*.55)*.06;u.legL.rotation.x=sw*.22;u.legR.rotation.x=-sw*.22;u.armL.rotation.x=-1.1+sw*.18;}
-      else if(u.gait==="march"){u.legL.rotation.x=sw*.62;u.legR.rotation.x=-sw*.62;u.armL.rotation.x=-sw*.62;u.armR.rotation.x=sw*.62;}
-      else if(u.gait==="reach"){u.armL.rotation.x=-1.65+sw*.18;u.armR.rotation.x=-1.65-sw*.18;u.spine.rotation.x=.2;}
-      else if(u.gait==="hunch"){u.spine.rotation.x=.48+Math.sin(e.phase*.5)*.05;u.legL.rotation.x=sw*.48;u.legR.rotation.x=-sw*.48;}
-      else if(u.gait==="skitter"){const q=Math.sin(e.phase*1.8);u.legL.rotation.x=q*.82;u.legR.rotation.x=-q*.82;u.arms.forEach((a,j)=>a.rotation.x=Math.sin(e.phase*1.8+j*1.5)*.72-.5);}
-      else if(u.gait==="bound"){u.spine.rotation.x=.62+Math.abs(sw)*.18;m.position.y=e.groundY+Math.abs(sw)*.09;u.armL.rotation.x=-.9+sw*.45;u.armR.rotation.x=-.9-sw*.45;}
-      else if(u.gait==="drag"){u.legL.rotation.x=sw*.35;u.legR.rotation.x=-sw*.62;u.armL.rotation.x=-.15+Math.max(0,sw)*.2;u.spine.rotation.z=-.16+Math.sin(e.phase*.35)*.08;}
-      else if(u.gait==="boss"){u.legL.rotation.x=sw*.3;u.legR.rotation.x=-sw*.3;u.spine.rotation.x=.2+Math.abs(sw)*.04;}
+      if(u.polyart){
+        e.attackAnimT=0;
+        playPolyartAction(u,e.type==="runner"?"run":(e.type==="brute"?"slowWalk":"walk"));
+      }else{
+        e.phase+=dt*(3+e.spd*1.4); const sw=Math.sin(e.phase);
+        u.legL.rotation.x=sw*0.7; u.legR.rotation.x=-sw*0.7;
+        u.legL.userData.shin.rotation.x=Math.max(0,-sw)*0.6; u.legR.userData.shin.rotation.x=Math.max(0,sw)*0.6;
+        u.armL.rotation.x=-sw*0.4-0.35; u.armR.rotation.x=sw*0.4-0.35;
+        u.armL.userData.fore.rotation.x=-0.6; u.armR.userData.fore.rotation.x=-0.6;
+        for(let ai=2;ai<u.arms.length;ai++)u.arms[ai].rotation.x=Math.sin(e.phase*(1.1+ai*.12)+ai)*.55-.45;
+        u.spine.rotation.z=Math.sin(e.phase*0.5)*0.06; u.spine.rotation.x=0.12+Math.sin(e.phase)*0.03;
+        if(u.gait==="stilt"){u.legL.rotation.x=sw*.95;u.legR.rotation.x=-sw*.95;u.spine.rotation.z=Math.sin(e.phase*.5)*.11;}
+        else if(u.gait==="heavy"){u.legL.rotation.x=sw*.38;u.legR.rotation.x=-sw*.38;u.spine.rotation.x=.18+Math.abs(sw)*.07;}
+        else if(u.gait==="glide"){m.position.y=e.groundY+.08+Math.sin(e.phase*.55)*.06;u.legL.rotation.x=sw*.22;u.legR.rotation.x=-sw*.22;u.armL.rotation.x=-1.1+sw*.18;}
+        else if(u.gait==="march"){u.legL.rotation.x=sw*.62;u.legR.rotation.x=-sw*.62;u.armL.rotation.x=-sw*.62;u.armR.rotation.x=sw*.62;}
+        else if(u.gait==="reach"){u.armL.rotation.x=-1.65+sw*.18;u.armR.rotation.x=-1.65-sw*.18;u.spine.rotation.x=.2;}
+        else if(u.gait==="hunch"){u.spine.rotation.x=.48+Math.sin(e.phase*.5)*.05;u.legL.rotation.x=sw*.48;u.legR.rotation.x=-sw*.48;}
+        else if(u.gait==="skitter"){const q=Math.sin(e.phase*1.8);u.legL.rotation.x=q*.82;u.legR.rotation.x=-q*.82;u.arms.forEach((a,j)=>a.rotation.x=Math.sin(e.phase*1.8+j*1.5)*.72-.5);}
+        else if(u.gait==="bound"){u.spine.rotation.x=.62+Math.abs(sw)*.18;m.position.y=e.groundY+Math.abs(sw)*.09;u.armL.rotation.x=-.9+sw*.45;u.armR.rotation.x=-.9-sw*.45;}
+        else if(u.gait==="drag"){u.legL.rotation.x=sw*.35;u.legR.rotation.x=-sw*.62;u.armL.rotation.x=-.15+Math.max(0,sw)*.2;u.spine.rotation.z=-.16+Math.sin(e.phase*.35)*.08;}
+        else if(u.gait==="boss"){u.legL.rotation.x=sw*.3;u.legR.rotation.x=-sw*.3;u.spine.rotation.x=.2+Math.abs(sw)*.04;}
+      }
     } else {
       e.atkCd-=dt;
-      u.armL.rotation.x=THREE.MathUtils.lerp(u.armL.rotation.x,-1.7,dt*9);
-      u.armR.rotation.x=THREE.MathUtils.lerp(u.armR.rotation.x,-1.7,dt*9);
-      for(let ai=2;ai<u.arms.length;ai++)u.arms[ai].rotation.x=THREE.MathUtils.lerp(u.arms[ai].rotation.x,-1.45,dt*9);
-      u.armL.userData.fore.rotation.x=THREE.MathUtils.lerp(u.armL.userData.fore.rotation.x,-0.2,dt*9);
-      u.armR.userData.fore.rotation.x=THREE.MathUtils.lerp(u.armR.userData.fore.rotation.x,-0.2,dt*9);
-      // gaping jaw when attacking
-      if(u.jaw)u.jaw.jaw.rotation.x=u.jaw.base+0.5+Math.sin(GS.time*10)*0.2;
-      if(e.atkCd<=0){e.atkCd=e.c.cd;e.lunge=0.001;Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);}
+      if(u.polyart){
+        if(e.attackAnimT>0)e.attackAnimT-=dt;
+        if(e.atkCd<=0){
+          e.atkCd=e.c.cd;e.lunge=0.001;
+          e.attackAnimT=Math.max(.35,u.actions.attack?u.actions.attack.getClip().duration:.6);
+          playPolyartAction(u,"attack",true);
+          Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);
+        }else if(e.attackAnimT<=0)playPolyartAction(u,"idle",false);
+      }else{
+        u.armL.rotation.x=THREE.MathUtils.lerp(u.armL.rotation.x,-1.7,dt*9);
+        u.armR.rotation.x=THREE.MathUtils.lerp(u.armR.rotation.x,-1.7,dt*9);
+        for(let ai=2;ai<u.arms.length;ai++)u.arms[ai].rotation.x=THREE.MathUtils.lerp(u.arms[ai].rotation.x,-1.45,dt*9);
+        u.armL.userData.fore.rotation.x=THREE.MathUtils.lerp(u.armL.userData.fore.rotation.x,-0.2,dt*9);
+        u.armR.userData.fore.rotation.x=THREE.MathUtils.lerp(u.armR.userData.fore.rotation.x,-0.2,dt*9);
+        // gaping jaw when attacking
+        if(u.jaw)u.jaw.jaw.rotation.x=u.jaw.base+0.5+Math.sin(GS.time*10)*0.2;
+        if(e.atkCd<=0){e.atkCd=e.c.cd;e.lunge=0.001;Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);}
+      }
       if(e.lunge>0){e.lunge+=dt;
         if(e.lunge>=0.22&&e.lunge-dt<0.22){
           if(dPlayer<reach+0.6) damagePlayer(e.c.dmg,m.position.x,m.position.z);
         }
         const l=Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5,ox=m.position.x,oz=m.position.z;
         const er=moveCabinSafe(ox,oz,ox+nx*l*dt*3,oz+nz*l*dt*3,e.radius);m.position.x=er.x;m.position.z=er.z;e.groundY=surfaceHeight(er.x,er.z)+u.soleOffset*e.c.sc;m.position.y=e.groundY;
-        u.spine.rotation.x=0.12+Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5;
+        if(!u.polyart)u.spine.rotation.x=0.12+Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5;
         if(e.lunge>0.5)e.lunge=0;
       }
     }
@@ -2055,7 +2200,7 @@ function later(fn,ms){const id=setTimeout(()=>{const i=flowTimers.indexOf(id);if
 function clearFlowTimers(){while(flowTimers.length)clearTimeout(flowTimers.pop());}
 async function newGame(){
   if(startingRun)return;startingRun=true;const status=$("rankedStatus");status.textContent="Starting verified ranked run…";$("miNew").style.pointerEvents="none";
-  try{await beginRankedRun();if(!rankedRunToken)throw new Error("Ranked service unavailable");}
+  try{status.textContent="Preparing the night…";await Promise.all([beginRankedRun(),POLYART.promise]);if(!rankedRunToken)throw new Error("Ranked service unavailable");}
   catch(e){status.textContent="Ranked service unavailable · tap Start New Game to retry";$("miNew").style.pointerEvents="";startingRun=false;return;}
   status.textContent="Verified run ready";$("miNew").style.pointerEvents="";startingRun=false;clearFlowTimers();
   Audio.init();Audio.resetRun();Audio.resume();Audio.resumeRun();Audio.dr(true);Audio.setVol(SET.volume);
