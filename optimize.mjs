@@ -50,10 +50,11 @@ replaceOnce('new THREE.CylinderGeometry(0.11,0.09,0.6,10)','new THREE.CylinderGe
 replaceOnce('new THREE.CylinderGeometry(0.08,0.06,0.6,10)','new THREE.CylinderGeometry(0.08,0.06,0.6,PERF_PROFILE.low?6:10)',"shin segments");
 replaceOnce('new THREE.SphereGeometry(.22,9,7)','new THREE.SphereGeometry(.22,PERF_PROFILE.low?7:9,PERF_PROFILE.low?5:7)',"lump segments");
 
-// Keep the gameplay entity authoritative, but give its renderer two faithful
-// representations: a real skinned GLB up close and a directional atlas frame
-// from that same rig for the crowd. The switch is hysteretic, so it does not
-// shimmer at a distance boundary.
+// The previous build path injected a Doom rig/impostor adapter here. The
+// isolated branch now owns a licensed Polyart rig path in index.html, so do not
+// add a second renderer or overwrite its animation mixer during optimization.
+const hasPolyartVisuals=html.includes("POLYART_ROOT");
+if(!hasPolyartVisuals){
 replaceOnce(
   `const enemies=[];`,
   `const enemyTemplates=Array(10),enemyPools=Array.from({length:10},()=>[]);
@@ -223,6 +224,11 @@ replaceOnce('    if(e.dying>1)   {scene.remove(m); enemies.splice(i,1);} continu
 replaceOnce('    if(e.stun>0){e.stun-=dt;u.spine.rotation.z=Math.sin(e.stun*38)*.16;u.spine.rotation.x=.28;m.position.y=e.groundY;continue;}','    if(e.stun>0){e.stun-=dt;u.spine.rotation.z=Math.sin(e.stun*38)*.16;u.spine.rotation.x=.28;m.position.y=e.groundY;updateEnemyVisual(e,dt);continue;}',"stunned enemy visual update");
 replaceOnce('    else m.scale.setScalar(e.c.sc);\n  }\n}','    else m.scale.setScalar(e.c.sc);\n    updateEnemyVisual(e,dt);\n  }\n}',"enemy visual adapter update");
 replaceExact('for(const e of enemies)scene.remove(e.m); enemies.length=0;','for(const e of enemies)releaseEnemyVisual(e.m,e.variant); enemies.length=0;',2,"pooled enemy cleanup");
+}
+
+if(!hasPolyartVisuals){
+  console.log("Skipping legacy Doom rig/impostor optimizer; Polyart visuals are active.");
+}
 
 // Pool impact particles/rings. The old path allocated geometry, materials,
 // Float32Arrays and Vector3 objects for every hit, then disposed them moments
@@ -283,9 +289,10 @@ replaceOnce(
 
 // Explicitly release unique enemy geometries after death/restart. Materials and
 // FACE_GEO primitives are shared and intentionally retained.
-replaceOnce('updateEnemyVisual(e,dt);if(e.dying>1)   {scene.remove(m); enemies.splice(i,1);} continue;','updateEnemyVisual(e,dt);if(e.dying>1){releaseEnemyVisual(m,e.variant);enemies.splice(i,1);} continue;',"pooled dead enemy cleanup");
+if(!hasPolyartVisuals)replaceOnce('updateEnemyVisual(e,dt);if(e.dying>1)   {scene.remove(m); enemies.splice(i,1);} continue;','updateEnemyVisual(e,dt);if(e.dying>1){releaseEnemyVisual(m,e.variant);enemies.splice(i,1);} continue;',"pooled dead enemy cleanup");
 
-for(const marker of ["IMPACT_POOL_SIZE","disposeEnemyVisual","SHARED_ENEMY_GEOMETRIES","ZOMBIE_MODELS","zombieAtlasMaterials","acquireEnemyVisual","setEnemyLOD","PERF_PROFILE.low?6:10"]){
+const markers=hasPolyartVisuals?["IMPACT_POOL_SIZE","PERF_PROFILE.low?6:10","POLYART_ROOT","makePolyartZombie"]:["IMPACT_POOL_SIZE","disposeEnemyVisual","SHARED_ENEMY_GEOMETRIES","ZOMBIE_MODELS","zombieAtlasMaterials","acquireEnemyVisual","setEnemyLOD","PERF_PROFILE.low?6:10"];
+for(const marker of markers){
   if(!html.includes(marker)) throw new Error(`HAZE final optimization missing ${marker}`);
 }
 if(html.includes('vel.push(new THREE.Vector3')) throw new Error('HAZE final optimization left allocating impact vectors in production.');
