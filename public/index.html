@@ -1317,11 +1317,35 @@ const POLYART_ANIM_FILES={
     attack:"ZombieMale@attack_left_70f.gltf"
   }
 };
+const POLYART_STYLES=[
+  {brightness:.78,hue:-.028,saturation:.02,lightness:-.012,scale:.98},
+  {brightness:.7,hue:.012,saturation:.08,lightness:-.028,scale:1.02},
+  {brightness:.84,hue:-.055,saturation:.05,lightness:-.02,scale:.96},
+  {brightness:.74,hue:.026,saturation:-.02,lightness:.008,scale:1.015}
+];
 const POLYART={ready:false,starterReady:false,templates:[],clips:{female:{},male:{}},promise:null,
-  phase:"queued",loaded:0,total:13,failed:false,
-  visualVariant(variant){return this.templates[variant]?variant:(variant<5?0:5);},
-  variantReady(variant){const kind=variant<5?"female":"male",clips=this.clips[kind];
-    return !!this.templates[variant]&&!!clips.idle&&!!clips.walk&&!!clips.attack;}
+  phase:"queued",loaded:0,total:13,failed:false,visualPool:[],visualBag:[],visualLast:-1,styleLast:-1,styleCursor:0,styleMaterials:new Map(),
+  resetVisualSelection(){this.visualBag=[];this.visualLast=-1;this.styleLast=-1;this.styleCursor=0;},
+  nextVisualVariant(){
+    const pool=this.visualPool.filter(i=>!!this.templates[i]);
+    if(!pool.length)return 0;
+    if(!this.visualBag.length){
+      this.visualBag=pool.slice();
+      for(let i=this.visualBag.length-1;i>0;i--){const j=(Math.random()*(i+1))|0;[this.visualBag[i],this.visualBag[j]]=[this.visualBag[j],this.visualBag[i]];}
+      if(this.visualBag.length>1&&this.visualBag[this.visualBag.length-1]===this.visualLast){
+        const j=(Math.random()*(this.visualBag.length-1))|0;[this.visualBag[j],this.visualBag[this.visualBag.length-1]]=[this.visualBag[this.visualBag.length-1],this.visualBag[j]];
+      }
+    }
+    const chosen=this.visualBag.pop();this.visualLast=chosen;return chosen;
+  },
+  visualVariant(variant){void variant;return this.nextVisualVariant();},
+  nextStyle(){
+    let style=(this.styleCursor++ + ((Math.random()*POLYART_STYLES.length)|0))%POLYART_STYLES.length;
+    if(POLYART_STYLES.length>1&&style===this.styleLast)style=(style+1)%POLYART_STYLES.length;
+    this.styleLast=style;return style;
+  },
+  variantReady(variant){const spec=this.templates[variant],kind=spec?.kind||(variant<5?"female":"male"),clips=this.clips[kind];
+    return !!spec&&!!clips.idle&&!!clips.walk&&!!clips.attack;}
 };
 function loadGltf(url){return new Promise((resolve,reject)=>new THREE.GLTFLoader().load(url,resolve,undefined,reject));}
 function waitForFrame(){return new Promise(resolve=>requestAnimationFrame(()=>resolve()));}
@@ -1368,6 +1392,27 @@ function tunePolyartScene(root,palette){
   root.updateMatrixWorld(true);
   return root;
 }
+function stylePolyartVisual(visual,styleId){
+  const preset=POLYART_STYLES[styleId]||POLYART_STYLES[0];
+  visual.traverse(n=>{
+    if(!n.isMesh)return;
+    const source=Array.isArray(n.material)?n.material:[n.material];
+    const styled=source.map(base=>{
+      if(!base)return base;
+      const key=base.uuid+":"+styleId;
+      let material=POLYART.styleMaterials.get(key);
+      if(!material){
+        material=base.clone();
+        if(material.color){material.color.copy(base.color).multiplyScalar(preset.brightness);material.color.offsetHSL(preset.hue,preset.saturation,preset.lightness);}
+        if(material.emissive)material.emissive.multiplyScalar(.35);
+        POLYART.styleMaterials.set(key,material);
+      }
+      return material;
+    });
+    n.material=Array.isArray(n.material)?styled:styled[0];
+  });
+  return preset;
+}
 async function loadPolyartZombies(){
   // Two representative rigs and the clips needed to walk and attack are the
   // starter payload. Every playable enemy uses one of these finished rigs;
@@ -1381,6 +1426,7 @@ async function loadPolyartZombies(){
       const g=await loadGltf(POLYART_ROOT+"rig-gltf_joined/"+POLYART_MODEL_FILES[i]);
       POLYART.templates[i]={kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)}; markPolyartLoad("starter rigs");
     }));
+    POLYART.visualPool=starterModels.filter(i=>!!POLYART.templates[i]);POLYART.resetVisualSelection();
     for(const kind of ["female","male"]){
       const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
       for(const role of ["idle","walk","run","slowWalk","attack"]){
@@ -1444,7 +1490,9 @@ function playPolyartAction(u,name,force=false){
   const next=u.actions[name]||u.actions.walk||u.actions.idle||u.actions.idle2;if(!next)return;
   if(!force&&u.activeAction===next)return;
   if(u.activeAction&&u.activeAction!==next)u.activeAction.fadeOut(.12);
-  next.reset().setEffectiveWeight(1).setEffectiveTimeScale(name==="run"?1.12:1).fadeIn(.12).play();
+  next.reset().setEffectiveWeight(1).setEffectiveTimeScale((name==="run"?1.12:1)*(u.motionRate||1)).fadeIn(.12).play();
+  const duration=next.getClip?.().duration||0;
+  if(duration>0&&Number.isFinite(u.motionSeed))next.time=(u.motionSeed*duration)%duration;
   u.activeAction=next;u.actionName=name;
 }
 function collectPolyartDeathBones(visual){
@@ -1465,9 +1513,10 @@ function collectPolyartDeathBones(visual){
   return bones;
 }
 function makePolyartZombie(type,variant){
-  const visualVariant=POLYART.visualVariant(variant),kind=variant<5?"female":"male",spec=POLYART.templates[visualVariant];
+  const visualVariant=POLYART.visualVariant(variant),spec=POLYART.templates[visualVariant],kind=spec?.kind||(variant<5?"female":"male"),styleId=POLYART.nextStyle(),style=POLYART_STYLES[styleId]||POLYART_STYLES[0];
   if(!spec)throw new Error("Polyart starter rig unavailable");
-  const visual=THREE.SkeletonUtils.clone(spec.scene),motionRoot=visual.getObjectByName("rig_CharRoot"),motionBase=motionRoot?motionRoot.position.clone():null,
+  const visual=THREE.SkeletonUtils.clone(spec.scene);stylePolyartVisual(visual,styleId);visual.scale.multiplyScalar(style.scale);
+  const motionRoot=visual.getObjectByName("rig_CharRoot"),motionBase=motionRoot?motionRoot.position.clone():null,
     mixer=new THREE.AnimationMixer(visual),attackMixer=new THREE.AnimationMixer(visual),clips=POLYART.clips[kind],actions={};
   for(const [role,clip] of Object.entries(clips)){
     if(role==="attack")continue;
@@ -1480,7 +1529,7 @@ function makePolyartZombie(type,variant){
   const g=new THREE.Group();g.add(visual);
   // The supplied 70-frame attack reaches its forward forearm strike around
   // frame 25; keep the contact marker clip-local instead of distance-based.
-  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,attackMixer,actions,attackAction,attackDuration:attackClip?.duration||.7,attackHitAt:.36,attackUsesUpper:!!upperClip,activeAction:null,actionName:"",deathBones:collectPolyartDeathBones(visual),
+  g.userData={polyart:true,visual,visualVariant,styleId,motionSeed:Math.random(),motionRate:.94+Math.random()*.12,motionRoot,motionBase,mixer,attackMixer,actions,attackAction,attackDuration:attackClip?.duration||.7,attackHitAt:.36,attackUsesUpper:!!upperClip,activeAction:null,actionName:"",deathBones:collectPolyartDeathBones(visual),
     // Compatibility stubs keep the lighting/reveal code shared with the old
     // procedural path without creating any extra visible geometry or lights.
     fm:{userData:{anatomyState:{localReveal:0}}},eg:{intensity:0},variant,soleOffset:0,
@@ -2568,7 +2617,7 @@ async function newGame(){
   Audio.init();Audio.resetRun();Audio.resume();Audio.resumeRun();Audio.dr(true);Audio.setVol(SET.volume);
   GS.state="playing"; GS.hp=GS.maxhp=100; GS.score=0; GS.kills=0; GS.wave=0; GS.time=0;
   GS.atkTimer=0;GS.swinging=false;GS.swingT=0;GS.hitset.clear();GS.attackBuffer=0;GS.swingWeapon=0;GS.queuedWeapon=null;GS.shake=0;GS.hitstop=0;GS.insideCabin=false;GS.shelterTime=0;GS.intermission=0;GS.waveActive=false;GS.spawnQueue.length=0;GS.spawnTimer=0;GS.remaining=0;GS.stormNext=2.6;GS.stormFlash=0;GS.thunder=0;fleshReveal=0;ANATOMY_PALETTES.forEach(p=>p.state.localReveal=0);updateFleshReveal();
-  variantCounter=0;CABIN.doorInt.visible=true;CABIN.glow.intensity=.36;CABIN.porchLight.intensity=.58;
+  variantCounter=0;POLYART.resetVisualSelection();CABIN.doorInt.visible=true;CABIN.glow.intensity=.36;CABIN.porchLight.intensity=.58;
   for(const e of enemies)scene.remove(e.m); enemies.length=0;
   resetTouchInput();camera.position.set(0,1.7,16);yaw=0;pitch=0;setWeapon(0);canvas.focus({preventScroll:true});
   showScreen(null); $("hud").classList.add("on"); $("hintBar").classList.add("on");
