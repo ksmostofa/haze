@@ -216,6 +216,16 @@
 
   #loading{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;
     background:#070707;color:#6a6d72;font-family:Arial;font-size:12px;letter-spacing:.4em;text-transform:uppercase}
+  #runLoader{position:fixed;inset:0;z-index:35;display:none;align-items:flex-end;justify-content:center;
+    padding:0 7vw 9vh;pointer-events:none;background:linear-gradient(to bottom,rgba(3,8,11,.04),rgba(3,8,11,.76))}
+  #runLoader.on{display:flex}
+  #runLoaderPanel{width:min(560px,90vw);padding:20px 22px 18px;border:1px solid rgba(220,228,232,.16);
+    background:rgba(5,9,12,.72);box-shadow:0 18px 60px rgba(0,0,0,.4);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px)}
+  #runLoaderTitle{font:700 9px Arial;letter-spacing:.34em;color:#8f989e;text-transform:uppercase}
+  #runLoaderMessage{font:900 16px Arial;letter-spacing:.1em;color:#e4e8ea;text-transform:uppercase;margin-top:9px}
+  #runLoaderMeta{display:flex;justify-content:space-between;gap:12px;margin-top:12px;font:700 9px Arial;letter-spacing:.16em;color:#727b81;text-transform:uppercase}
+  #runLoaderTrack{height:2px;margin-top:9px;background:rgba(255,255,255,.12);overflow:hidden}
+  #runLoaderFill{height:100%;width:18%;background:linear-gradient(90deg,#687981,#e2e7e9);transition:width .3s ease}
   .fadein{animation:fi .7s ease both}@keyframes fi{from{opacity:0}to{opacity:1}}
   .menuPad.fadein{animation:menuFi .7s ease both}@keyframes menuFi{from{opacity:0;transform:translateY(calc(-50% + 12px))}to{opacity:1;transform:translateY(-50%)}}
   .hidden{display:none!important}
@@ -424,6 +434,15 @@
       <div id="submitStatus"></div>
     </div>
     <div><button class="btn" id="vAgain">Play Again</button><button class="btn ghost" id="vBoard">Leaderboard</button><button class="btn ghost" id="vMenu">Title</button></div>
+  </div>
+</div>
+
+<div id="runLoader" role="status" aria-live="polite" aria-hidden="true">
+  <div id="runLoaderPanel">
+    <div id="runLoaderTitle">Preparing a verified night</div>
+    <div id="runLoaderMessage">Waking the forest…</div>
+    <div id="runLoaderMeta"><span id="runLoaderPhase">Securing the run</span><span id="runLoaderCount">0%</span></div>
+    <div id="runLoaderTrack"><div id="runLoaderFill"></div></div>
   </div>
 </div>
 
@@ -1280,8 +1299,14 @@ const POLYART_ANIM_FILES={
     attack:"ZombieMale@attack_left_70f.gltf"
   }
 };
-const POLYART={ready:false,templates:[],clips:{female:{},male:{}},promise:null};
+const POLYART={ready:false,starterReady:false,templates:[],clips:{female:{},male:{}},promise:null,
+  phase:"queued",loaded:0,total:23,failed:false,
+  variantReady(variant){const kind=variant<5?"female":"male",clips=this.clips[kind];
+    return !!this.templates[variant]&&!!clips.idle&&!!clips.walk&&!!clips.attack;}
+};
 function loadGltf(url){return new Promise((resolve,reject)=>new THREE.GLTFLoader().load(url,resolve,undefined,reject));}
+function waitForFrame(){return new Promise(resolve=>requestAnimationFrame(()=>resolve()));}
+function markPolyartLoad(phase){POLYART.phase=phase;POLYART.loaded=Math.min(POLYART.total,POLYART.loaded+1);}
 function loadHazeZombiePalette(){
   return new Promise(resolve=>{
     new THREE.TextureLoader().load(POLYART_ROOT+"rig-gltf_joined/zcolors_haze.png",texture=>{
@@ -1325,21 +1350,46 @@ function tunePolyartScene(root,palette){
   return root;
 }
 async function loadPolyartZombies(){
+  // Two representative rigs and the clips needed to walk and attack are the
+  // starter payload. Everything else is deliberately parsed after the first
+  // playable frame so a low-end device never waits for the art catalog.
   try{
-    const [palette,models]=await Promise.all([
-      loadHazeZombiePalette(),
-      Promise.all(POLYART_MODEL_FILES.map(file=>loadGltf(POLYART_ROOT+"rig-gltf_joined/"+file))),
-    ]);
-    POLYART.templates=models.map((g,i)=>({kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)}));
+    POLYART.phase="palette";
+    const palette=await loadHazeZombiePalette(); markPolyartLoad("palette");
+    const starterModels=[0,5];
+    POLYART.phase="starter rigs";
+    await Promise.all(starterModels.map(async i=>{
+      const g=await loadGltf(POLYART_ROOT+"rig-gltf_joined/"+POLYART_MODEL_FILES[i]);
+      POLYART.templates[i]={kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)}; markPolyartLoad("starter rigs");
+    }));
     for(const kind of ["female","male"]){
       const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
-      const entries=Object.entries(POLYART_ANIM_FILES[kind]);
-      const loaded=await Promise.all(entries.map(async([role,file])=>[role,(await loadGltf(POLYART_ROOT+"animations-gltf/"+dir+"/"+file)).animations?.[0]]));
-      for(const [role,clip] of loaded){if(!clip)throw new Error("missing "+kind+" "+role+" animation");clip.name="polyart_"+kind+"_"+role;POLYART.clips[kind][role]=clip;}
+      for(const role of ["idle","walk","run","slowWalk","attack"]){
+        const file=POLYART_ANIM_FILES[kind][role],g=await loadGltf(POLYART_ROOT+"animations-gltf/"+dir+"/"+file),clip=g.animations?.[0];
+        if(!clip)throw new Error("missing "+kind+" "+role+" animation");
+        clip.name="polyart_"+kind+"_"+role;POLYART.clips[kind][role]=clip;markPolyartLoad("starter clips");
+        await waitForFrame();
+      }
     }
-    POLYART.ready=true;
+    POLYART.starterReady=true;
+
+    // Optional idle variation, then the remaining silhouettes. A frame yield
+    // between parses keeps animation and input responsive while the cache warms.
+    for(const kind of ["female","male"]){
+      const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
+      const idle2=POLYART_ANIM_FILES[kind].idle2,g=await loadGltf(POLYART_ROOT+"animations-gltf/"+dir+"/"+idle2),clip=g.animations?.[0];
+      if(clip){clip.name="polyart_"+kind+"_idle2";POLYART.clips[kind].idle2=clip;markPolyartLoad("idle variation");}
+      await waitForFrame();
+    }
+    for(const i of [1,2,3,4,6,7,8,9]){
+      const g=await loadGltf(POLYART_ROOT+"rig-gltf_joined/"+POLYART_MODEL_FILES[i]);
+      POLYART.templates[i]={kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)};markPolyartLoad("background rigs");
+      await waitForFrame();
+    }
+    POLYART.ready=true;POLYART.phase="complete";POLYART.loaded=POLYART.total;
     return true;
   }catch(err){
+    POLYART.failed=true;POLYART.phase="fallback";
     console.warn("Polyart zombies unavailable; keeping procedural fallback.",err);
     return false;
   }
@@ -1386,11 +1436,28 @@ function updatePolyartAttack(e,u,targetX,targetZ,dPlayer,reach,dt){
 function playPolyartAction(u,name,force=false){
   if(!u||!u.mixer)return;
   if(name==="attack"){playPolyartAttack(u,force);return;}
-  const next=u.actions[name]||u.actions.idle||u.actions.idle2;if(!next)return;
+  const next=u.actions[name]||u.actions.walk||u.actions.idle||u.actions.idle2;if(!next)return;
   if(!force&&u.activeAction===next)return;
   if(u.activeAction&&u.activeAction!==next)u.activeAction.fadeOut(.12);
   next.reset().setEffectiveWeight(1).setEffectiveTimeScale(name==="run"?1.12:1).fadeIn(.12).play();
   u.activeAction=next;u.actionName=name;
+}
+function collectPolyartDeathBones(visual){
+  const bones=[];
+  visual.traverse(node=>{
+    if(!node.isBone)return;
+    const name=(node.name||"").toLowerCase();
+    let kind="";
+    if(/spine/.test(name))kind="spine";
+    else if(/neck/.test(name))kind="neck";
+    else if(/head|jaw/.test(name))kind="head";
+    else if(/upperarm/.test(name))kind="upperArm";
+    else if(/forearm|hand/.test(name))kind="forearm";
+    else if(/thigh/.test(name))kind="thigh";
+    else if(/calf|foot|toe/.test(name))kind="lowerLeg";
+    if(kind)bones.push({node,kind,base:{x:node.rotation.x,y:node.rotation.y,z:node.rotation.z}});
+  });
+  return bones;
 }
 function makePolyartZombie(type,variant){
   const kind=variant<5?"female":"male",spec=POLYART.templates[variant];
@@ -1408,7 +1475,7 @@ function makePolyartZombie(type,variant){
   const g=new THREE.Group();g.add(visual);
   // The supplied 70-frame attack reaches its forward forearm strike around
   // frame 25; keep the contact marker clip-local instead of distance-based.
-  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,attackMixer,actions,attackAction,attackDuration:attackClip?.duration||.7,attackHitAt:.36,attackUsesUpper:!!upperClip,activeAction:null,actionName:"",
+  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,attackMixer,actions,attackAction,attackDuration:attackClip?.duration||.7,attackHitAt:.36,attackUsesUpper:!!upperClip,activeAction:null,actionName:"",deathBones:collectPolyartDeathBones(visual),
     // Compatibility stubs keep the lighting/reveal code shared with the old
     // procedural path without creating any extra visible geometry or lights.
     fm:{userData:{anatomyState:{localReveal:0}}},eg:{intensity:0},variant,soleOffset:0,
@@ -1695,6 +1762,15 @@ const TYPES={
 function insideCabin(x,z){return !!CABIN&&Math.abs(x)<CABIN_HALF_W-.28&&z>-CABIN_HALF_D+.28&&z<CABIN_HALF_D-.28;}
 function cabinDoorway(x,z){return !!CABIN&&Math.abs(x)<CABIN_DOOR_HALF&&z>2.2&&z<4.4;}
 function insideObstacle(x,z){for(const o of obstacles){const dx=x-o.x,dz=z-o.z;if(dx*dx+dz*dz<(o.r+0.8)*(o.r+0.8))return true;}return false;}
+function spawnPathClear(ax,az,bx,bz,r){for(const o of obstacles){const rr=o.r+r+.16;if(pointSegDistSq(o.x,o.z,ax,az,bx,bz)<rr*rr)return false;}return true;}
+function spawnHiddenFromPlayer(x,z){
+  const dx=x-camera.position.x,dz=z-camera.position.z,d=Math.hypot(dx,dz)||1;
+  const front=(dx*(-Math.sin(yaw))+dz*(-Math.cos(yaw)))/d;
+  // Never introduce a new enemy in the player's forward cone. It begins in
+  // the dense outer ring and walks into the clearing, so turning toward the
+  // tree line reveals an arrival rather than a pop.
+  return front<.28||d>48;
+}
 let variantCounter=0;
 function spawnEnemy(entry){
   const type=typeof entry==="string"?entry:entry.type;
@@ -1702,16 +1778,24 @@ function spawnEnemy(entry){
   const variant=forcedVariant==null?(variantCounter++)%10:((forcedVariant%10)+10)%10;
   const base=TYPES[type],a=ARCH_STATS[variant];
   const c={hp:Math.round(base.hp*a.hp),spd:base.spd*a.spd,dmg:Math.round(base.dmg*a.dmg),score:Math.round(base.score*(.8+a.hp*.35)),sc:base.sc*a.sc,cd:base.cd};
-  const m=POLYART.ready?makePolyartZombie(type,variant):makeZombie(type,variant); m.scale.setScalar(c.sc);
-  // spawn OUT OF THE FOREST at the clearing edge (all around), not next to player
-  let x,z,t=0;
-  do{const a=Math.random()*6.28,r=CLEARING_R-2+Math.random()*3;
-     x=Math.cos(a)*r; z=Math.sin(a)*r; t++;}while(insideObstacle(x,z)&&t<16);
-  const gy=surfaceHeight(x,z)+m.userData.soleOffset*c.sc;m.position.set(x,gy,z); scene.add(m);
+  const m=POLYART.variantReady(variant)?makePolyartZombie(type,variant):makeZombie(type,variant); m.scale.setScalar(c.sc);
+  // Spawn beyond the first tree ring, then walk a short, collision-safe path
+  // into the clearing. Candidate sockets in the camera's forward cone are
+  // rejected, which keeps the arrival hidden even when a wave starts mid-look.
+  const targetR=CLEARING_R-1.35;
+  let x=0,z=0,tx=0,tz=0,t=0,angle=0;
+  do{
+    angle=Math.random()*6.283; const r=CLEARING_R+2.4+Math.random()*3.6;
+    x=Math.cos(angle)*r;z=Math.sin(angle)*r;tx=Math.cos(angle)*targetR;tz=Math.sin(angle)*targetR;t++;
+  }while(t<28&&(insideObstacle(x,z)||insideObstacle(tx,tz)||!spawnPathClear(x,z,tx,tz,.42)||!spawnHiddenFromPlayer(x,z)));
+  const startY=surfaceHeight(x,z)+m.userData.soleOffset*c.sc,targetY=surfaceHeight(tx,tz)+m.userData.soleOffset*c.sc;
+  m.position.set(x,startY,z);m.rotation.y=angle+Math.PI;scene.add(m);
   const visualWidth=variant===9?.68:variant===1||variant===8?.72:.62;
   enemies.push({m,type,c,variant,proofId:++enemyProofSeq,spawnedAtMs:Math.round(GS.time*1000),name:ARCH_NAMES[variant],hp:c.hp,maxhp:c.hp,spd:c.spd*(0.9+Math.random()*0.2),radius:Math.min(1.52,visualWidth*c.sc),
     atkCd:0,flash:0,stun:0,phase:Math.random()*6.28,dead:false,dying:0,lunge:0,groan:2+Math.random()*6,attackState:"approach",attackPrevTime:0,attackHitAt:.36,attackHitApplied:false,attackRecovery:0,fallbackAttackApplied:false,deathStarted:false,
-    groundY:gy,doorState:"pursue",doorLane:null,doorSide:variant%2?-1:1,stuckTime:0,lastNavX:x,lastNavZ:z});
+    spawnState:"emerge",spawnT:0,spawnDuration:.78+Math.random()*.32,spawnStartX:x,spawnStartZ:z,spawnStartY:startY,spawnTargetX:tx,spawnTargetZ:tz,spawnTargetY:targetY,
+    deathNx:0,deathNz:0,deathStartX:0,deathStartZ:0,deathRoll:0,
+    groundY:startY,doorState:"pursue",doorLane:null,doorSide:variant%2?-1:1,stuckTime:0,lastNavX:x,lastNavZ:z});
 }
 
 /* ============================ IMPACT FX ============================ */
@@ -2001,7 +2085,7 @@ function damageEnemy(e,dmg,nx,nz,kb){
   const k=(e.type==="brute")?kb*0.3:kb;
   const ox=e.m.position.x,oz=e.m.position.z,q=moveCabinSafe(ox,oz,ox+nx*k,oz+nz*k,e.radius);
   e.m.position.x=q.x;e.m.position.z=q.z;e.groundY=surfaceHeight(q.x,q.z)+e.m.userData.soleOffset*e.c.sc;e.m.position.y=e.groundY;
-  if(e.hp<=0&&!e.dead){ e.dead=true; e.dying=0; GS.kills++; GS.score+=e.c.score; GS.remaining=Math.max(0,GS.remaining-1);
+  if(e.hp<=0&&!e.dead){ e.dead=true; e.dying=0; e.deathNx=nx||0; e.deathNz=nz||0; e.deathStartX=e.m.position.x; e.deathStartZ=e.m.position.z; GS.kills++; GS.score+=e.c.score; GS.remaining=Math.max(0,GS.remaining-1);
     runProof.kills.push({id:e.proofId,wave:GS.wave,type:e.type,variant:e.variant,spawnedAtMs:e.spawnedAtMs,atMs:Math.round(GS.time*1000)});
     Audio.kill(); updateHUD(); return true; }
   return false;
@@ -2197,6 +2281,46 @@ function selectCabinWaypoint(e,px,pz,playerInside){
   e.doorState="pursue";
   return {x:px,z:pz,routing:false,crossing:false};
 }
+function animateProceduralGait(e,u,dt){
+  e.phase+=dt*(3+e.spd*1.4);const sw=Math.sin(e.phase);
+  u.legL.rotation.x=sw*.7;u.legR.rotation.x=-sw*.7;
+  u.legL.userData.shin.rotation.x=Math.max(0,-sw)*.6;u.legR.userData.shin.rotation.x=Math.max(0,sw)*.6;
+  u.armL.rotation.x=-sw*.4-.35;u.armR.rotation.x=sw*.4-.35;
+  u.armL.userData.fore.rotation.x=-.6;u.armR.userData.fore.rotation.x=-.6;
+  for(let ai=2;ai<u.arms.length;ai++)u.arms[ai].rotation.x=Math.sin(e.phase*(1.1+ai*.12)+ai)*.55-.45;
+  u.spine.rotation.z=Math.sin(e.phase*.5)*.06;u.spine.rotation.x=.12+Math.sin(e.phase)*.03;
+}
+function updateEnemyEmergence(e,u,dt){
+  e.spawnT+=dt;const raw=Math.min(1,e.spawnT/e.spawnDuration),t=raw*raw*(3-2*raw);
+  const x=THREE.MathUtils.lerp(e.spawnStartX,e.spawnTargetX,t),z=THREE.MathUtils.lerp(e.spawnStartZ,e.spawnTargetZ,t);
+  e.m.position.x=x;e.m.position.z=z;e.groundY=THREE.MathUtils.lerp(e.spawnStartY,e.spawnTargetY,t);e.m.position.y=e.groundY;
+  const ty=Math.atan2(e.spawnTargetX-e.spawnStartX,e.spawnTargetZ-e.spawnStartZ);e.m.rotation.y+=angDelta(e.m.rotation.y,ty)*Math.min(1,dt*8);
+  if(u.polyart)playPolyartAction(u,e.type==="runner"?"run":(e.type==="brute"?"slowWalk":"walk"));
+  else animateProceduralGait(e,u,dt);
+  if(raw>=1){e.spawnState="active";e.spawnT=0;e.attackPrevTime=0;e.fallbackAttackApplied=false;}
+}
+function beginEnemyDeath(e,u){
+  if(e.deathStarted)return;
+  e.deathStarted=true;e.deathStartX=e.m.position.x;e.deathStartZ=e.m.position.z;
+  if(u.polyart){
+    if(u.deathBones)for(const b of u.deathBones){b.base.x=b.node.rotation.x;b.base.y=b.node.rotation.y;b.base.z=b.node.rotation.z;}
+    stopPolyartAttack(u);if(u.mixer)u.mixer.stopAllAction();if(u.attackMixer)u.attackMixer.stopAllAction();u.activeAction=null;
+  }
+  const side=Math.sin(e.m.rotation.y)*e.deathNx-Math.cos(e.m.rotation.y)*e.deathNz;
+  e.deathRoll=(side<-.05?-1:side>.05?1:(e.variant%2?-1:1))*(.92+((e.variant*17)%7)*.045);
+}
+function updatePolyartDeathPose(u,fall,roll){
+  if(!u.deathBones)return;
+  for(const b of u.deathBones){const r=b.node.rotation;
+    if(b.kind==="spine"){r.x=b.base.x+.68*fall;r.z=b.base.z+roll*.18*fall;}
+    else if(b.kind==="neck"){r.x=b.base.x+.32*fall;r.z=b.base.z-roll*.12*fall;}
+    else if(b.kind==="head"){r.x=b.base.x+.42*fall;r.z=b.base.z+roll*.16*fall;}
+    else if(b.kind==="upperArm"){r.x=b.base.x-.48*fall;r.z=b.base.z+(roll>0?.72:-.72)*fall;}
+    else if(b.kind==="forearm"){r.x=b.base.x-.3*fall;r.z=b.base.z+(roll>0?-1.05:1.05)*fall;}
+    else if(b.kind==="thigh"){r.x=b.base.x+.22*fall;r.z=b.base.z+(roll>0?.16:-.16)*fall;}
+    else if(b.kind==="lowerLeg"){r.x=b.base.x-.16*fall;}
+  }
+}
 function updateEnemies(dt){
   const px=camera.position.x, pz=camera.position.z;
   const rev=fleshReveal;
@@ -2216,19 +2340,21 @@ function updateEnemies(dt){
     if(creatureInside)u.fm.userData.anatomyState.localReveal=1;
     else u.fm.userData.anatomyState.localReveal=Math.max(0,(u.fm.userData.anatomyState.localReveal||0)-dt*2.8);
     if(e.flash>0)e.flash-=dt;
+    if(e.spawnState==="emerge"&&!e.dead){updateEnemyEmergence(e,u,dt);continue;}
     if(e.dead){
-      e.dying+=dt; const t=Math.min(1,e.dying/0.9);
+      e.dying+=dt; const raw=Math.min(1,e.dying/.9),t=raw*raw*(3-2*raw);
+      beginEnemyDeath(e,u);
+      const settle=Math.max(0,Math.min(1,(e.dying-.9)/.42)),push=Math.sin(Math.min(1,e.dying/.9)*Math.PI)*.34;
+      const dq=moveCabinSafe(e.deathStartX,e.deathStartZ,e.deathStartX+e.deathNx*push,e.deathStartZ+e.deathNz*push,e.radius);
+      m.position.x=dq.x;m.position.z=dq.z;e.groundY=surfaceHeight(dq.x,dq.z)+u.soleOffset*e.c.sc;
       if(u.polyart){
-        if(!e.deathStarted){e.deathStarted=true;stopPolyartAttack(u);e.attackState="approach";playPolyartAction(u,"idle2",true);}
-        // A restrained root fall gives the sourced rig a readable death beat
-        // without importing a second, heavy death animation set.
-        m.rotation.z=THREE.MathUtils.lerp(0,(e.variant%2?-1:1)*1.18,t);
-        m.position.y=e.groundY-t*.06; m.scale.setScalar(e.c.sc*(1-t*0.08));
+        m.rotation.z=e.deathRoll*t;m.rotation.x=e.deathNx*.12*t;m.position.y=e.groundY-.025*Math.sin(t*Math.PI)-.012*settle;
+        updatePolyartDeathPose(u,t,e.deathRoll);m.scale.setScalar(e.c.sc*(1-settle*.06));
       }else{
-        u.spine.rotation.x=0.12+t*1.3; m.position.y=e.groundY-t*1.0; m.scale.setScalar(e.c.sc*(1-t*0.12));
+        m.rotation.z=e.deathRoll*t;u.spine.rotation.x=.12+t*1.28;u.spine.rotation.z=e.deathRoll*.16*t;m.position.y=e.groundY-.035*Math.sin(t*Math.PI)-.02*settle;m.scale.setScalar(e.c.sc*(1-settle*.1));
         u.eg.intensity=0;u.eyes.forEach(x=>{const on=e.dying<.32;x.visible=on;x.userData.iris.visible=on;x.userData.pupil.visible=on;});
       }
-      if(e.dying>1){scene.remove(m); enemies.splice(i,1);} continue;
+      if(e.dying>1.34){scene.remove(m); enemies.splice(i,1);} continue;
     }
     if(e.stun>0){e.stun-=dt;
       if(u.polyart){stopPolyartAttack(u);e.attackState="approach";e.attackPrevTime=0;m.position.y=e.groundY;playPolyartAction(u,"idle",false);}
@@ -2403,10 +2529,30 @@ function showScreen(id){ ["title","leaderboard","pause","controls","settings","g
 const flowTimers=[];
 function later(fn,ms){const id=setTimeout(()=>{const i=flowTimers.indexOf(id);if(i>=0)flowTimers.splice(i,1);fn();},ms);flowTimers.push(id);return id;}
 function clearFlowTimers(){while(flowTimers.length)clearTimeout(flowTimers.pop());}
+const RUN_LOADER_LINES=["Waking the forest…","Checking the cabin light…","Tracing movement in the fog…","Counting the breaths between trees…","Sealing the night behind you…"];
+const runLoader={timer:null,showTimer:null,index:0,startedAt:0,
+  render(){
+    const phase=POLYART.starterReady?"Starter rigs ready · finishing the night":"Securing the verified run";
+    $("runLoaderMessage").textContent=RUN_LOADER_LINES[this.index%RUN_LOADER_LINES.length];
+    $("runLoaderPhase").textContent=phase;
+    $("runLoaderCount").textContent=POLYART.starterReady?"RIGS READY":"SYNCING";
+    $("runLoaderFill").style.width=POLYART.starterReady?"78%":(18+((this.index%4)*9))+"%";
+  },
+  start(){
+    this.stop();this.index=0;this.startedAt=performance.now();this.render();
+    this.showTimer=setTimeout(()=>{$("runLoader").classList.add("on");$("runLoader").setAttribute("aria-hidden","false");},110);
+    this.timer=setInterval(()=>{this.index++;this.render();},1100);
+  },
+  stop(){
+    if(this.timer){clearInterval(this.timer);this.timer=null;}if(this.showTimer){clearTimeout(this.showTimer);this.showTimer=null;}
+    $("runLoader").classList.remove("on");$("runLoader").setAttribute("aria-hidden","true");
+  }
+};
 async function newGame(){
-  if(startingRun)return;startingRun=true;const status=$("rankedStatus");status.textContent="Starting verified ranked run…";$("miNew").style.pointerEvents="none";
-  try{status.textContent="Preparing the night…";await Promise.all([beginRankedRun(),POLYART.promise]);if(!rankedRunToken)throw new Error("Ranked service unavailable");}
-  catch(e){status.textContent="Ranked service unavailable · tap Start New Game to retry";$("miNew").style.pointerEvents="";startingRun=false;return;}
+  if(startingRun)return;startingRun=true;const status=$("rankedStatus");status.textContent="Starting verified ranked run…";$("miNew").style.pointerEvents="none";runLoader.start();
+  try{status.textContent="Preparing the night…";await beginRankedRun();if(!rankedRunToken)throw new Error("Ranked service unavailable");}
+  catch(e){status.textContent="Ranked service unavailable · tap Start New Game to retry";$("miNew").style.pointerEvents="";startingRun=false;runLoader.stop();return;}
+  runLoader.stop();
   status.textContent="Verified run ready";$("miNew").style.pointerEvents="";startingRun=false;clearFlowTimers();
   Audio.init();Audio.resetRun();Audio.resume();Audio.resumeRun();Audio.dr(true);Audio.setVol(SET.volume);
   GS.state="playing"; GS.hp=GS.maxhp=100; GS.score=0; GS.kills=0; GS.wave=0; GS.time=0;
