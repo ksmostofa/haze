@@ -8,3 +8,6 @@
 HAZE ships the characters inside the compiled game and does not expose the
 source files as a separate downloadable asset pack. The included
 `ReadMe_FreeZombies.txt` is retained from the download.
+
+`rig-gltf_joined/zcolors_haze.png` is a derived, darker HAZE palette made from
+the supplied `zcolors.png`; the original palette remains unchanged.

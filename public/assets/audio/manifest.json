@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "licensePolicy": "CC0 sources only; see ASSET_SOURCES.md",
+  "events": {
+    "swing": "oga/sword.1.ogg..sword.6.ogg",
+    "hit": "kenney/impactGeneric_light_000.ogg..004.ogg",
+    "kill": "kenney/impactPlank_medium_000.ogg, impactPlank_medium_001.ogg, impactMetal_heavy_000.ogg",
+    "hurt": "oga/player-hit.mp3, oga/hurt-01.mp3",
+    "groan": "oga/zombie-1.ogg, zombie-2.ogg, zombie-4.ogg, zombie-10.ogg, zombie-16.ogg, zombie-24.ogg",
+    "step": "kenney/footstep_grass_000.ogg..003.ogg",
+    "creak": "kenney/creak1.ogg, kenney/creak2.ogg",
+    "ambience": "oga/forest-ambience.mp3"
+  }
+}
