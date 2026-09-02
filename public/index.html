@@ -918,6 +918,117 @@ for(let i=0;i<100;i++){const a=Math.random()*6.28,r=7+Math.random()*(CLEARING_R-
 })();
 
 
+/* ============================ IMPORTED ENVIRONMENT DRESSING ============================ */
+// The generated cabin, forest wall, and collision volumes remain authoritative.
+// These licensed assets are a visual-only dressing layer with a procedural fallback.
+const ENV_PROFILE=typeof PERF_PROFILE==="undefined"?{low:false}:PERF_PROFILE;
+const ENV_ROOT="/assets/environment/kenney";
+const importedEnvironment={root:new THREE.Group(),entries:[],ready:false,failed:false,pendingReveal:false,qualityTimer:0};
+importedEnvironment.root.name="kenney-dressing";
+importedEnvironment.root.visible=false;
+scene.add(importedEnvironment.root);
+
+const ENV_ASSETS=[
+  {key:"treeA",family:"nature",url:ENV_ROOT+"/nature/tree_detailed_dark.glb",placements:[
+    {x:-13,z:-13,s:2.85,max:62},{x:15,z:-16,s:3.1,max:62}]},
+  {key:"pineB",family:"nature",url:ENV_ROOT+"/nature/tree_pineTallB_detailed.glb",placements:[
+    {x:-21,z:1,s:3.2,max:66},{x:22,z:5,s:3.35,max:66}]},
+  {key:"pineD",family:"nature",url:ENV_ROOT+"/nature/tree_pineTallD_detailed.glb",placements:[
+    {x:-24,z:-16,s:3.6,max:72},{x:26,z:-18,s:3.8,max:72}]},
+  {key:"rockA",family:"nature",url:ENV_ROOT+"/nature/rock_largeA.glb",placements:[
+    {x:8,z:9,s:1.2,max:38},{x:-10,z:8,s:1.05,max:38}]},
+  {key:"rockB",family:"nature",url:ENV_ROOT+"/nature/rock_largeB.glb",placements:[
+    {x:13,z:-8,s:1.1,max:44},{x:-15,z:-6,s:1.25,max:44}]},
+  {key:"rockTall",family:"nature",url:ENV_ROOT+"/nature/rock_tallA.glb",placements:[
+    {x:28,z:2,s:1.65,max:58}]},
+  {key:"stump",family:"nature",url:ENV_ROOT+"/nature/stump_oldTall.glb",placements:[
+    {x:6,z:12,s:1.25,max:34},{x:-8,z:-11,s:1.05,max:34}]},
+  {key:"log",family:"nature",url:ENV_ROOT+"/nature/log_large.glb",placements:[
+    {x:-12,z:5,s:1.15,r:.52,max:36}]},
+  {key:"bush",family:"nature",url:ENV_ROOT+"/nature/plant_bushDetailed.glb",placements:[
+    {x:5,z:7,s:1.4,max:30},{x:-6,z:6,s:1.3,max:30}]},
+  {key:"grass",family:"nature",url:ENV_ROOT+"/nature/grass_leafsLarge.glb",placements:[
+    {x:10,z:3,s:1.5,r:.25,max:28},{x:-11,z:2,s:1.35,r:-.35,max:28}]},
+  {key:"grave",family:"graveyard",url:ENV_ROOT+"/graveyard/grave.glb",placements:[
+    {x:25,z:-5,s:1.25,r:.4,max:62}]},
+  {key:"marker",family:"graveyard",url:ENV_ROOT+"/graveyard/gravestone-broken.glb",placements:[
+    {x:28,z:-8,s:1.35,r:-.2,max:58}]},
+  {key:"fence",family:"graveyard",url:ENV_ROOT+"/graveyard/fence-damaged.glb",placements:[
+    {x:30,z:-3,s:1.4,r:.25,max:64}]},
+  {key:"coffin",family:"graveyard",url:ENV_ROOT+"/graveyard/coffin-old.glb",placements:[
+    {x:23,z:-11,s:1.15,r:-.35,max:58}]},
+  {key:"lantern",family:"graveyard",url:ENV_ROOT+"/graveyard/lantern-glass.glb",placements:[
+    {x:-4.6,z:5.1,s:1.05,r:.2,max:32}]},
+];
+
+function loadEnvironmentModel(url){
+  return new Promise((resolve,reject)=>{
+    if(!THREE.GLTFLoader){reject(new Error("GLTFLoader unavailable"));return;}
+    new THREE.GLTFLoader().load(url,resolve,undefined,reject);
+  });
+}
+function prepareEnvironmentModel(source,family){
+  const root=source.scene||source;
+  const tint=family==="graveyard"?.62:.72;
+  root.traverse(node=>{
+    if(!node.isMesh)return;
+    node.castShadow=false;node.receiveShadow=true;node.frustumCulled=true;
+    const sourceMats=Array.isArray(node.material)?node.material:[node.material];
+    const mats=sourceMats.map(mat=>{
+      const color=mat&&mat.color?mat.color.clone():new THREE.Color(0xffffff);color.multiplyScalar(tint);
+      const next=new THREE.MeshStandardMaterial({
+        color,map:mat&&mat.map?mat.map:null,roughness:.94,metalness:0,
+        transparent:!!(mat&&mat.transparent),opacity:mat&&Number.isFinite(mat.opacity)?mat.opacity:1,
+        alphaTest:mat&&mat.alphaTest?mat.alphaTest:0,side:THREE.DoubleSide,
+      });
+      if(next.map){next.map.encoding=THREE.sRGBEncoding;next.map.anisotropy=1;}
+      return next;
+    });
+    node.material=Array.isArray(node.material)?mats:mats[0];
+  });
+  return root;
+}
+function addEnvironmentPlacement(source,spec){
+  const model=source.clone(true),baseY=surfaceHeight(spec.x,spec.z);
+  model.position.set(spec.x,baseY+(spec.y||0),spec.z);
+  model.rotation.y=spec.r||0;model.scale.setScalar(spec.s||1);importedEnvironment.root.add(model);
+  importedEnvironment.entries.push({root:model,x:spec.x,z:spec.z,max:spec.max||48,low:spec.max<=34});
+}
+function updateImportedEnvironment(dt){
+  if(!importedEnvironment.ready)return;
+  // If the downloads finish after a run has started, wait for the next title
+  // screen before revealing/compiling them. This prevents an asset decode or
+  // shader compile from becoming a one-frame gameplay hitch.
+  if(importedEnvironment.pendingReveal&&GS.state!=="playing"){
+    importedEnvironment.pendingReveal=false;importedEnvironment.root.visible=true;
+    try{renderer.compile(scene,camera);}catch(e){}
+  }
+  importedEnvironment.qualityTimer-=dt;if(importedEnvironment.qualityTimer>0)return;importedEnvironment.qualityTimer=.28;
+  const px=camera.position.x,pz=camera.position.z,low=!!ENV_PROFILE.low;
+  for(const e of importedEnvironment.entries){
+    const dx=e.x-px,dz=e.z-pz;e.root.visible=(!low||e.low)&&dx*dx+dz*dz<e.max*e.max;
+  }
+}
+async function loadImportedEnvironment(){
+  if(!THREE.GLTFLoader)return;
+  try{
+    const loaded=await Promise.all(ENV_ASSETS.map(async spec=>({spec,root:prepareEnvironmentModel(await loadEnvironmentModel(spec.url),spec.family)})));
+    for(const item of loaded)for(const placement of item.spec.placements)addEnvironmentPlacement(item.root,placement);
+    importedEnvironment.ready=true;
+    if(GS.state==="playing"){
+      importedEnvironment.pendingReveal=true;importedEnvironment.root.visible=false;
+    }else{
+      importedEnvironment.root.visible=true;updateImportedEnvironment(1);
+      // Compile the new materials while the title screen is up, never during a run.
+      try{renderer.compile(scene,camera);}catch(e){}
+    }
+  }catch(error){
+    importedEnvironment.failed=true;console.warn("HAZE environment dressing unavailable; procedural scene retained",error);
+  }
+}
+void loadImportedEnvironment();
+
+
 /* drifting spores/dust */
 const dust=(function(){
   const N=180,g=new THREE.BufferGeometry(),pos=new Float32Array(N*3);
@@ -1171,7 +1282,14 @@ const POLYART_ANIM_FILES={
 };
 const POLYART={ready:false,templates:[],clips:{female:{},male:{}},promise:null};
 function loadGltf(url){return new Promise((resolve,reject)=>new THREE.GLTFLoader().load(url,resolve,undefined,reject));}
-function tunePolyartScene(root){
+function loadHazeZombiePalette(){
+  return new Promise(resolve=>{
+    new THREE.TextureLoader().load(POLYART_ROOT+"rig-gltf_joined/zcolors_haze.png",texture=>{
+      texture.flipY=false;texture.encoding=THREE.sRGBEncoding;texture.magFilter=THREE.LinearFilter;texture.minFilter=THREE.LinearMipmapLinearFilter;texture.anisotropy=1;resolve(texture);
+    },undefined,()=>resolve(null));
+  });
+}
+function tunePolyartScene(root,palette){
   root.traverse(n=>{
     if(!n.isMesh)return;
     n.castShadow=false;n.receiveShadow=false;
@@ -1183,9 +1301,10 @@ function tunePolyartScene(root){
     const mats=Array.isArray(n.material)?n.material:[n.material];
     mats.forEach(mat=>{
       if(!mat)return;
-      // Keep the source palette but push it into the existing blue-black HAZE
-      // grade. This prevents the imported characters from reading as bright toys.
-      if(mat.color)mat.color.multiplyScalar(.62);
+      // The derived palette keeps the source UV layout but removes the bright
+      // toy-like colors. Keep the original map as a fallback if it cannot load.
+      if(palette&&mat.map)mat.map=palette;
+      if(mat.color)mat.color.multiplyScalar(.76);
       mat.roughness=Math.max(.86,mat.roughness||0);
       mat.metalness=0;
       if(mat.emissive)mat.emissive.setRGB(.001,.0005,.0005);
@@ -1207,8 +1326,11 @@ function tunePolyartScene(root){
 }
 async function loadPolyartZombies(){
   try{
-    const models=await Promise.all(POLYART_MODEL_FILES.map(file=>loadGltf(POLYART_ROOT+"rig-gltf_joined/"+file)));
-    POLYART.templates=models.map((g,i)=>({kind:i<5?"female":"male",scene:tunePolyartScene(g.scene)}));
+    const [palette,models]=await Promise.all([
+      loadHazeZombiePalette(),
+      Promise.all(POLYART_MODEL_FILES.map(file=>loadGltf(POLYART_ROOT+"rig-gltf_joined/"+file))),
+    ]);
+    POLYART.templates=models.map((g,i)=>({kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)}));
     for(const kind of ["female","male"]){
       const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
       const entries=Object.entries(POLYART_ANIM_FILES[kind]);
@@ -1223,8 +1345,47 @@ async function loadPolyartZombies(){
   }
 }
 POLYART.promise=loadPolyartZombies();
+function makeUpperBodyClip(clip){
+  if(!clip||!clip.tracks)return null;
+  const tracks=clip.tracks.filter(track=>{
+    const name=track.name||"";
+    return /(?:Spine1?|Neck|Head|jaw|Clavicle|UpperArm|Forearm|Hand|Finger)/i.test(name)&&
+      !/(?:Pelvis|Thigh|Calf|Foot|Toe|rig_CharRoot)/i.test(name);
+  });
+  return tracks.length>=3?new THREE.AnimationClip(clip.name+"_upper",clip.duration,tracks):null;
+}
+function playPolyartAttack(u,force=false){
+  const action=u&&u.attackAction;if(!action)return;
+  if(!force&&action.isRunning())return;
+  action.reset().setLoop(THREE.LoopOnce,1).setEffectiveWeight(1).setEffectiveTimeScale(1).fadeIn(.08).play();
+}
+function stopPolyartAttack(u){
+  const action=u&&u.attackAction;if(!action)return;
+  action.stop().setEffectiveWeight(0);
+}
+function beginPolyartAttack(e,u,proximity,pan,occluded){
+  if(!u||!u.attackAction||e.attackState!=="approach"||e.atkCd>0)return false;
+  e.attackState="windup";e.attackPrevTime=0;e.attackHitApplied=false;e.attackRecovery=0;e.attackHitAt=u.attackHitAt||.36;e.atkCd=e.c.cd;e.lunge=.001;
+  playPolyartAttack(u,true);Audio.groan(e.variant,true,proximity,pan,occluded);return true;
+}
+function updatePolyartAttack(e,u,targetX,targetZ,dPlayer,reach,dt){
+  if(!u||!u.attackAction||e.attackState==="approach")return;
+  const duration=Math.max(.001,e.attackDuration||u.attackDuration||.7),now=Math.max(0,Math.min(duration,u.attackAction.time||0)),prev=Math.max(0,Math.min(duration,e.attackPrevTime||0)),marker=Math.max(.12,Math.min(.86,e.attackHitAt||u.attackHitAt||.36));
+  if(!e.attackHitApplied&&prev<marker&&now>=marker){
+    e.attackHitApplied=true;
+    const dx=targetX-e.m.position.x,dz=targetZ-e.m.position.z,dist=Math.hypot(dx,dz),facing=(Math.sin(e.m.rotation.y)*dx+Math.cos(e.m.rotation.y)*dz)/(dist||1);
+    if(dist<reach+.6&&facing>-.35)damagePlayer(e.c.dmg,e.m.position.x,e.m.position.z);
+    e.attackState="strike";
+  }
+  e.attackPrevTime=now;
+  if(now>=duration-.001){
+    e.attackState="recovery";e.attackRecovery+=dt;
+    if(e.attackRecovery>.18){stopPolyartAttack(u);e.attackState="approach";e.attackPrevTime=0;e.attackRecovery=0;}
+  }
+}
 function playPolyartAction(u,name,force=false){
   if(!u||!u.mixer)return;
+  if(name==="attack"){playPolyartAttack(u,force);return;}
   const next=u.actions[name]||u.actions.idle||u.actions.idle2;if(!next)return;
   if(!force&&u.activeAction===next)return;
   if(u.activeAction&&u.activeAction!==next)u.activeAction.fadeOut(.12);
@@ -1235,15 +1396,19 @@ function makePolyartZombie(type,variant){
   const kind=variant<5?"female":"male",spec=POLYART.templates[variant];
   if(!spec)return makeZombie(type,variant);
   const visual=THREE.SkeletonUtils.clone(spec.scene),motionRoot=visual.getObjectByName("rig_CharRoot"),motionBase=motionRoot?motionRoot.position.clone():null,
-    mixer=new THREE.AnimationMixer(visual),clips=POLYART.clips[kind],actions={};
+    mixer=new THREE.AnimationMixer(visual),attackMixer=new THREE.AnimationMixer(visual),clips=POLYART.clips[kind],actions={};
   for(const [role,clip] of Object.entries(clips)){
+    if(role==="attack")continue;
     const action=mixer.clipAction(clip,visual);action.enabled=true;
-    if(role==="attack"){action.setLoop(THREE.LoopOnce,1);action.clampWhenFinished=true;}
-    else action.setLoop(THREE.LoopRepeat,Infinity);
+    action.setLoop(THREE.LoopRepeat,Infinity);
     actions[role]=action;
   }
+  const attackClip=clips.attack,upperClip=makeUpperBodyClip(attackClip),attackAction=attackMixer.clipAction(upperClip||attackClip,visual);
+  attackAction.enabled=true;attackAction.setLoop(THREE.LoopOnce,1);attackAction.clampWhenFinished=true;attackAction.setEffectiveWeight(0);actions.attack=attackAction;
   const g=new THREE.Group();g.add(visual);
-  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,actions,activeAction:null,actionName:"",attackAnimT:0,
+  // The supplied 70-frame attack reaches its forward forearm strike around
+  // frame 25; keep the contact marker clip-local instead of distance-based.
+  g.userData={polyart:true,visual,motionRoot,motionBase,mixer,attackMixer,actions,attackAction,attackDuration:attackClip?.duration||.7,attackHitAt:.36,attackUsesUpper:!!upperClip,activeAction:null,actionName:"",
     // Compatibility stubs keep the lighting/reveal code shared with the old
     // procedural path without creating any extra visible geometry or lights.
     fm:{userData:{anatomyState:{localReveal:0}}},eg:{intensity:0},variant,soleOffset:0,
@@ -1545,7 +1710,7 @@ function spawnEnemy(entry){
   const gy=surfaceHeight(x,z)+m.userData.soleOffset*c.sc;m.position.set(x,gy,z); scene.add(m);
   const visualWidth=variant===9?.68:variant===1||variant===8?.72:.62;
   enemies.push({m,type,c,variant,proofId:++enemyProofSeq,spawnedAtMs:Math.round(GS.time*1000),name:ARCH_NAMES[variant],hp:c.hp,maxhp:c.hp,spd:c.spd*(0.9+Math.random()*0.2),radius:Math.min(1.52,visualWidth*c.sc),
-    atkCd:0,flash:0,stun:0,phase:Math.random()*6.28,dead:false,dying:0,lunge:0,groan:2+Math.random()*6,attackAnimT:0,deathStarted:false,
+    atkCd:0,flash:0,stun:0,phase:Math.random()*6.28,dead:false,dying:0,lunge:0,groan:2+Math.random()*6,attackState:"approach",attackPrevTime:0,attackHitAt:.36,attackHitApplied:false,attackRecovery:0,fallbackAttackApplied:false,deathStarted:false,
     groundY:gy,doorState:"pursue",doorLane:null,doorSide:variant%2?-1:1,stuckTime:0,lastNavX:x,lastNavZ:z});
 }
 
@@ -1571,7 +1736,19 @@ function impactBurst(x,y,z){
 /* ============================ AUDIO ============================ */
 const Audio=(function(){
   let ctx,master,gameBus,drone,ready,nb,nightTimer=2.2,critterTimer=7,creakTimer=5,owlTimer=28,wolfTimer=44,vocalActive=0;
+  let samplePromise=null,sampleReady=false,ambienceSource=null,ambienceGain=null,ambienceDesired=false;
   const activeSources=new Set();
+  const samples=new Map(),sampleCursor=Object.create(null),sampleLastAt=Object.create(null);
+  const SAMPLE_BANKS={
+    swing:["/assets/audio/oga/sword.1.ogg","/assets/audio/oga/sword.2.ogg","/assets/audio/oga/sword.3.ogg","/assets/audio/oga/sword.4.ogg","/assets/audio/oga/sword.5.ogg","/assets/audio/oga/sword.6.ogg"],
+    hit:["/assets/audio/kenney/impactGeneric_light_000.ogg","/assets/audio/kenney/impactGeneric_light_001.ogg","/assets/audio/kenney/impactGeneric_light_002.ogg","/assets/audio/kenney/impactGeneric_light_003.ogg","/assets/audio/kenney/impactGeneric_light_004.ogg"],
+    kill:["/assets/audio/kenney/impactPlank_medium_000.ogg","/assets/audio/kenney/impactPlank_medium_001.ogg","/assets/audio/kenney/impactMetal_heavy_000.ogg"],
+    hurt:["/assets/audio/oga/player-hit.mp3","/assets/audio/oga/hurt-01.mp3"],
+    groan:["/assets/audio/oga/zombie-1.ogg","/assets/audio/oga/zombie-2.ogg","/assets/audio/oga/zombie-4.ogg","/assets/audio/oga/zombie-10.ogg","/assets/audio/oga/zombie-16.ogg","/assets/audio/oga/zombie-24.ogg"],
+    step:["/assets/audio/kenney/footstep_grass_000.ogg","/assets/audio/kenney/footstep_grass_001.ogg","/assets/audio/kenney/footstep_grass_002.ogg","/assets/audio/kenney/footstep_grass_003.ogg"],
+    creak:["/assets/audio/kenney/creak1.ogg","/assets/audio/kenney/creak2.ogg"],
+    ambience:["/assets/audio/oga/forest-ambience.mp3"],
+  };
   function init(){ if(ready)return; try{ctx=new(AudioContext||webkitAudioContext)();}catch(e){return;}
     master=ctx.createGain();master.gain.value=SET.volume;
     const limiter=ctx.createDynamicsCompressor();limiter.threshold.value=-12;limiter.knee.value=8;limiter.ratio.value=10;limiter.attack.value=.003;limiter.release.value=.24;
@@ -1585,33 +1762,59 @@ const Audio=(function(){
     const wf=ctx.createBiquadFilter();wf.type="bandpass";wf.frequency.value=620;wf.Q.value=.55;
     const wg=ctx.createGain();wg.gain.value=.055;wsrc.connect(wf);wf.connect(wg);wg.connect(drone);wsrc.start();
     const lfo=ctx.createOscillator();lfo.frequency.value=.055;const lg=ctx.createGain();lg.gain.value=230;lfo.connect(lg);lg.connect(wf.frequency);lfo.start();
-    ready=true;
+    ready=true;void loadSamples();
   }
   function setVol(v){if(ready)master.gain.value=v;}
   function resume(){if(ctx&&ctx.state==="suspended")ctx.resume();}
-  function dr(on){if(ready){const now=ctx.currentTime,v=drone.gain.value;drone.gain.cancelScheduledValues(now);drone.gain.setValueAtTime(Math.max(.0001,v),now);drone.gain.linearRampToValueAtTime(on?.82:0,now+1.2);}}
+  async function decodeSample(url){
+    try{const res=await fetch(url,{cache:"force-cache"});if(!res.ok)throw new Error("HTTP "+res.status);const raw=await res.arrayBuffer();return await ctx.decodeAudioData(raw);}
+    catch(error){console.warn("HAZE audio sample unavailable",url,error);return null;}
+  }
+  async function loadSamples(){
+    if(!ready||samplePromise)return samplePromise;
+    samplePromise=(async()=>{
+      for(const key of Object.keys(SAMPLE_BANKS)){
+        const decoded=await Promise.all(SAMPLE_BANKS[key].map(decodeSample)),bank=decoded.filter(Boolean);
+        if(bank.length)samples.set(key,bank);
+      }
+      sampleReady=true;startAmbience();
+    })();
+    return samplePromise;
+  }
+  function startAmbience(){
+    if(!ready||!sampleReady||ambienceSource)return;const bank=samples.get("ambience");if(!bank||!bank.length)return;
+    ambienceSource=track(ctx.createBufferSource());ambienceSource.buffer=bank[0];ambienceSource.loop=true;
+    ambienceGain=ctx.createGain();ambienceGain.gain.value=.0001;ambienceSource.connect(ambienceGain);ambienceGain.connect(gameBus);ambienceSource.start();
+    ambienceGain.gain.linearRampToValueAtTime(ambienceDesired?.2:.0001,ctx.currentTime+1.2);
+  }
+  function dr(on){if(ready){ambienceDesired=!!on;const now=ctx.currentTime,v=drone.gain.value;drone.gain.cancelScheduledValues(now);drone.gain.setValueAtTime(Math.max(.0001,v),now);drone.gain.linearRampToValueAtTime(on?.82:0,now+1.2);startAmbience();if(ambienceGain){ambienceGain.gain.cancelScheduledValues(now);ambienceGain.gain.setValueAtTime(Math.max(.0001,ambienceGain.gain.value),now);ambienceGain.gain.linearRampToValueAtTime(on?.2:.0001,now+1.2);}}}
   function track(src){activeSources.add(src);src.addEventListener("ended",()=>activeSources.delete(src),{once:true});return src;}
   function pauseRun(){if(!ready)return;gameBus.gain.cancelScheduledValues(ctx.currentTime);gameBus.gain.setTargetAtTime(.0001,ctx.currentTime,.025);}
   function resumeRun(){if(!ready)return;gameBus.gain.cancelScheduledValues(ctx.currentTime);gameBus.gain.setTargetAtTime(1,ctx.currentTime,.035);}
-  function resetRun(){if(!ready)return;for(const s of activeSources){try{s.stop();}catch(e){}}activeSources.clear();vocalActive=0;nightTimer=2+Math.random()*2;critterTimer=6+Math.random()*6;creakTimer=5;owlTimer=24+Math.random()*18;wolfTimer=38+Math.random()*34;gameBus.gain.cancelScheduledValues(ctx.currentTime);gameBus.gain.setValueAtTime(1,ctx.currentTime);}
+  function resetRun(){if(!ready)return;for(const s of activeSources){try{s.stop();}catch(e){}}activeSources.clear();ambienceSource=null;ambienceGain=null;ambienceDesired=false;vocalActive=0;for(const key of Object.keys(sampleLastAt))delete sampleLastAt[key];nightTimer=2+Math.random()*2;critterTimer=6+Math.random()*6;creakTimer=5;owlTimer=24+Math.random()*18;wolfTimer=38+Math.random()*34;gameBus.gain.cancelScheduledValues(ctx.currentTime);gameBus.gain.setValueAtTime(1,ctx.currentTime);}
   function env(node,pk,a,d){const g=ctx.createGain();g.gain.setValueAtTime(0.0001,ctx.currentTime);
     g.gain.exponentialRampToValueAtTime(pk,ctx.currentTime+a);g.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+a+d);
     node.connect(g);g.connect(gameBus);return g;}
   function noise(){const s=track(ctx.createBufferSource());s.buffer=nb;return s;}
-  function weaponSwing(weapon=0){if(!ready)return;const s=noise(),bp=ctx.createBiquadFilter(),dur=[.2,.17,.24,.27,.31][weapon];
+  function playSample(key,gain,rate=1,pan=0,gap=.04){
+    if(!ready||!sampleReady)return false;const bank=samples.get(key);if(!bank||!bank.length)return false;const now=ctx.currentTime,last=sampleLastAt[key]||-99;if(now-last<gap)return false;sampleLastAt[key]=now;
+    const cursor=sampleCursor[key]||0,buffer=bank[cursor%bank.length];sampleCursor[key]=cursor+1;const src=track(ctx.createBufferSource()),g=ctx.createGain();src.buffer=buffer;src.playbackRate.value=rate*(.96+Math.random()*.08);g.gain.value=gain*(.92+Math.random()*.12);src.connect(g);if(ctx.createStereoPanner){const p=ctx.createStereoPanner();p.pan.value=Math.max(-1,Math.min(1,pan));g.connect(p);p.connect(gameBus);}else g.connect(gameBus);src.start(now);return true;
+  }
+  function weaponSwing(weapon=0){if(!ready)return;if(playSample("swing",[.27,.25,.3,.29,.31][weapon]||.28,[1.04,.92,1.14,.8,.88][weapon]||1,0,.08))return;const s=noise(),bp=ctx.createBiquadFilter(),dur=[.2,.17,.24,.27,.31][weapon];
     bp.type=weapon===2?"highpass":"bandpass";bp.Q.value=weapon===3?.55:1.05;
     const lo=[720,560,1450,190,330][weapon],hi=[3600,2700,5200,760,1800][weapon];bp.frequency.setValueAtTime(lo,ctx.currentTime);bp.frequency.exponentialRampToValueAtTime(hi,ctx.currentTime+dur*.72);
     s.connect(bp);env(bp,[.3,.28,.22,.38,.42][weapon],.009,dur);s.start();s.stop(ctx.currentTime+dur+.04);}
-  function hit(weapon=0,killed=false){if(!ready)return;
+  function hit(weapon=0,killed=false){if(!ready)return;if(playSample("hit",killed?.42:.31,[1.02,.94,1.08,.82,.9][weapon]||1,0,.025))return;
     const s=noise(),bp=ctx.createBiquadFilter();bp.type="bandpass";bp.frequency.value=[1250,980,1750,430,820][weapon]||900;bp.Q.value=.7;s.connect(bp);env(bp,killed?.5:.36,.002,.105);s.start();s.stop(ctx.currentTime+.13);
     const body=noise(),lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=[240,190,310,120,150][weapon];body.connect(lp);env(lp,killed?.52:.34,.002,.18);body.playbackRate.value=.62;body.start();body.stop(ctx.currentTime+.22);
   }
-  function kill(){if(!ready)return;const s=noise(),lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.setValueAtTime(720,ctx.currentTime);lp.frequency.exponentialRampToValueAtTime(90,ctx.currentTime+.55);s.connect(lp);env(lp,.46,.008,.56);s.playbackRate.value=.7;s.start();s.stop(ctx.currentTime+.62);}
-  function hurt(){if(!ready)return;const o=track(ctx.createOscillator());o.type="square";
+  function kill(){if(!ready)return;if(playSample("kill",.42,.86,0,.03))return;const s=noise(),lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.setValueAtTime(720,ctx.currentTime);lp.frequency.exponentialRampToValueAtTime(90,ctx.currentTime+.55);s.connect(lp);env(lp,.46,.008,.56);s.playbackRate.value=.7;s.start();s.stop(ctx.currentTime+.62);}
+  function hurt(){if(!ready)return;if(playSample("hurt",.32,.95,0,.18))return;const o=track(ctx.createOscillator());o.type="square";
     o.frequency.setValueAtTime(95,ctx.currentTime);o.frequency.exponentialRampToValueAtTime(52,ctx.currentTime+0.25);
     env(o,0.4,0.004,0.28);o.start();o.stop(ctx.currentTime+0.32);}
   function groan(variant=0,attack=false,proximity=.55,pan=0,occluded=false){
     if(!ready||(!attack&&vocalActive>=3))return;vocalActive++;
+    if(playSample("groan",Math.min(.18,.045+proximity*.14)*(occluded?.42:1),attack?1.12:.94,pan,attack?.12:.22)){vocalActive--;return;}
     const sig=[52,84,115,66,142,43,98,128,58,36],wave=["sawtooth","triangle","square","sawtooth","triangle","sawtooth","square","triangle","sawtooth","square"];
     const o=track(ctx.createOscillator());o.type=wave[variant%10];const b=sig[variant%10]*(attack?1.55:1)*(0.9+Math.random()*.2),dur=attack?.42:.82;
     o.frequency.setValueAtTime(b,ctx.currentTime);o.frequency.exponentialRampToValueAtTime(Math.max(24,b*(attack?.46:.62)),ctx.currentTime+dur);
@@ -1629,7 +1832,7 @@ const Audio=(function(){
   }
   function owl(wild){for(let i=0;i<2;i++){const o=track(ctx.createOscillator()),at=ctx.currentTime+i*.42,g=ctx.createGain();o.type="sine";o.frequency.setValueAtTime(360-i*35,at);o.frequency.exponentialRampToValueAtTime(245-i*28,at+.46);g.gain.setValueAtTime(.0001,at);g.gain.exponentialRampToValueAtTime(.022*wild,at+.06);g.gain.exponentialRampToValueAtTime(.0001,at+.56);o.connect(g);g.connect(gameBus);o.start(at);o.stop(at+.58);}}
   function wolf(wild){for(let i=0;i<2;i++){const o=track(ctx.createOscillator());o.type=i?"triangle":"sine";o.frequency.setValueAtTime(235+i*18,ctx.currentTime);o.frequency.linearRampToValueAtTime(315+i*22,ctx.currentTime+.65);o.frequency.exponentialRampToValueAtTime(178+i*12,ctx.currentTime+1.75);env(o,.018*wild,.24,1.65);o.start();o.stop(ctx.currentTime+1.9);}}
-  function creak(){if(!ready)return;const o=track(ctx.createOscillator());o.type="triangle";o.frequency.setValueAtTime(128,ctx.currentTime);o.frequency.exponentialRampToValueAtTime(48,ctx.currentTime+.7);const l=track(ctx.createOscillator()),lg=ctx.createGain();l.frequency.value=11;lg.gain.value=16;l.connect(lg);lg.connect(o.frequency);env(o,.045,.04,.72);o.start();l.start();o.stop(ctx.currentTime+.78);l.stop(ctx.currentTime+.78);}
+  function creak(){if(!ready)return;if(playSample("creak",.22,.9,0,.3))return;const o=track(ctx.createOscillator());o.type="triangle";o.frequency.setValueAtTime(128,ctx.currentTime);o.frequency.exponentialRampToValueAtTime(48,ctx.currentTime+.7);const l=track(ctx.createOscillator()),lg=ctx.createGain();l.frequency.value=11;lg.gain.value=16;l.connect(lg);lg.connect(o.frequency);env(o,.045,.04,.72);o.start();l.start();o.stop(ctx.currentTime+.78);l.stop(ctx.currentTime+.78);}
   function tick(dt,inside,wave=1){if(!ready)return;nightTimer-=dt;critterTimer-=dt;creakTimer-=dt;owlTimer-=dt;wolfTimer-=dt;const wild=Math.max(.28,1-Math.max(0,wave-2)*.16);
     if(nightTimer<=0){nightTimer=1.8+Math.random()*3.7;nightCall(0,wild);}
     if(critterTimer<=0){critterTimer=5+Math.random()*9;nightCall(1,wild);}
@@ -1637,7 +1840,7 @@ const Audio=(function(){
     if(owlTimer<=0){owlTimer=26+Math.random()*34;owl(wild);}
     if(wolfTimer<=0){wolfTimer=42+Math.random()*45;wolf(wild);}
   }
-  function step(){if(!ready)return;const s=noise();const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=200;s.connect(lp);env(lp,0.12,0.004,0.09);s.start();s.stop(ctx.currentTime+0.12);}
+  function step(){if(!ready)return;if(playSample("step",.16,.98,0,.06))return;const s=noise();const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=200;s.connect(lp);env(lp,0.12,0.004,0.09);s.start();s.stop(ctx.currentTime+0.12);}
   function click(){if(!ready)return;const o=track(ctx.createOscillator());o.type="square";o.frequency.value=600;env(o,0.08,0.002,0.05);o.start();o.stop(ctx.currentTime+0.06);}
   function toll(){if(!ready)return;const o=track(ctx.createOscillator());o.type="sine";o.frequency.setValueAtTime(150,ctx.currentTime);o.frequency.exponentialRampToValueAtTime(70,ctx.currentTime+1.2);env(o,0.4,0.02,1.3);o.start();o.stop(ctx.currentTime+1.4);}
   function thunder(){if(!ready)return;
@@ -2001,6 +2204,7 @@ function updateEnemies(dt){
     const e=enemies[i], m=e.m, u=m.userData;
     if(u.polyart&&u.mixer){
       u.mixer.update(dt);
+      if(u.attackMixer)u.attackMixer.update(dt);
       // The source clips contain root-motion translations for standalone
       // demos. HAZE owns horizontal movement and terrain height, so keep that
       // root bone at its authored rest position to prevent drift or floating.
@@ -2015,7 +2219,7 @@ function updateEnemies(dt){
     if(e.dead){
       e.dying+=dt; const t=Math.min(1,e.dying/0.9);
       if(u.polyart){
-        if(!e.deathStarted){e.deathStarted=true;playPolyartAction(u,"idle2",true);}
+        if(!e.deathStarted){e.deathStarted=true;stopPolyartAttack(u);e.attackState="approach";playPolyartAction(u,"idle2",true);}
         // A restrained root fall gives the sourced rig a readable death beat
         // without importing a second, heavy death animation set.
         m.rotation.z=THREE.MathUtils.lerp(0,(e.variant%2?-1:1)*1.18,t);
@@ -2027,7 +2231,7 @@ function updateEnemies(dt){
       if(e.dying>1){scene.remove(m); enemies.splice(i,1);} continue;
     }
     if(e.stun>0){e.stun-=dt;
-      if(u.polyart){m.position.y=e.groundY;playPolyartAction(u,"idle",false);}
+      if(u.polyart){stopPolyartAttack(u);e.attackState="approach";e.attackPrevTime=0;m.position.y=e.groundY;playPolyartAction(u,"idle",false);}
       else {u.spine.rotation.z=Math.sin(e.stun*38)*.16;u.spine.rotation.x=.28;m.position.y=e.groundY;}
       continue;
     }
@@ -2046,6 +2250,11 @@ function updateEnemies(dt){
       if(od<mn&&od>0.001){sx+=ox/od*(mn-od);sz+=oz/od*(mn-od);} }
     const reach=e.radius+0.55+0.75;
     const inRange = !route.routing&&dPlayer<reach;
+    e.atkCd=Math.max(0,e.atkCd-dt);
+    if(u.polyart&&e.attackState==="approach"&&!route.routing&&dPlayer<reach+1.65&&e.atkCd<=0){
+      beginPolyartAttack(e,u,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);
+    }
+    if(u.polyart)updatePolyartAttack(e,u,px,pz,dPlayer,reach,dt);
     if(!inRange){
       if(route.crossing){sx*=.12;sz*=.12;}
       let vx=nx*e.spd+sx*3, vz=nz*e.spd+sz*3; const stt=Math.hypot(vx,vz);
@@ -2059,7 +2268,6 @@ function updateEnemies(dt){
       m.position.x=nxp;m.position.z=nzp;e.groundY=surfaceHeight(nxp,nzp)+u.soleOffset*e.c.sc;
       m.position.y=e.groundY;
       if(u.polyart){
-        e.attackAnimT=0;
         playPolyartAction(u,e.type==="runner"?"run":(e.type==="brute"?"slowWalk":"walk"));
       }else{
         e.phase+=dt*(3+e.spd*1.4); const sw=Math.sin(e.phase);
@@ -2081,15 +2289,8 @@ function updateEnemies(dt){
         else if(u.gait==="boss"){u.legL.rotation.x=sw*.3;u.legR.rotation.x=-sw*.3;u.spine.rotation.x=.2+Math.abs(sw)*.04;}
       }
     } else {
-      e.atkCd-=dt;
       if(u.polyart){
-        if(e.attackAnimT>0)e.attackAnimT-=dt;
-        if(e.atkCd<=0){
-          e.atkCd=e.c.cd;e.lunge=0.001;
-          e.attackAnimT=Math.max(.35,u.actions.attack?u.actions.attack.getClip().duration:.6);
-          playPolyartAction(u,"attack",true);
-          Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);
-        }else if(e.attackAnimT<=0)playPolyartAction(u,"idle",false);
+        if(e.attackState==="approach")playPolyartAction(u,"idle",false);
       }else{
         u.armL.rotation.x=THREE.MathUtils.lerp(u.armL.rotation.x,-1.7,dt*9);
         u.armR.rotation.x=THREE.MathUtils.lerp(u.armR.rotation.x,-1.7,dt*9);
@@ -2098,17 +2299,21 @@ function updateEnemies(dt){
         u.armR.userData.fore.rotation.x=THREE.MathUtils.lerp(u.armR.userData.fore.rotation.x,-0.2,dt*9);
         // gaping jaw when attacking
         if(u.jaw)u.jaw.jaw.rotation.x=u.jaw.base+0.5+Math.sin(GS.time*10)*0.2;
-        if(e.atkCd<=0){e.atkCd=e.c.cd;e.lunge=0.001;Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);}
+        if(e.atkCd<=0){e.atkCd=e.c.cd;e.lunge=0.001;e.fallbackAttackApplied=false;Audio.groan(e.variant,true,Math.max(.12,1-dPlayer/18),voicePan,voiceOcc);}
       }
-      if(e.lunge>0){e.lunge+=dt;
-        if(e.lunge>=0.22&&e.lunge-dt<0.22){
-          if(dPlayer<reach+0.6) damagePlayer(e.c.dmg,m.position.x,m.position.z);
-        }
-        const l=Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5,ox=m.position.x,oz=m.position.z;
-        const er=moveCabinSafe(ox,oz,ox+nx*l*dt*3,oz+nz*l*dt*3,e.radius);m.position.x=er.x;m.position.z=er.z;e.groundY=surfaceHeight(er.x,er.z)+u.soleOffset*e.c.sc;m.position.y=e.groundY;
-        if(!u.polyart)u.spine.rotation.x=0.12+Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5;
-        if(e.lunge>0.5)e.lunge=0;
+    }
+    if(e.lunge>0){e.lunge+=dt;
+      // Procedural fallback has no authored clip, so its visible lunge is the
+      // contact marker. Imported rigs use updatePolyartAttack above instead.
+      if(!u.polyart&&!e.fallbackAttackApplied&&e.lunge>=.22&&e.lunge-dt<.22){
+        e.fallbackAttackApplied=true;
+        const adx=px-m.position.x,adz=pz-m.position.z,ad=Math.hypot(adx,adz),af=(Math.sin(m.rotation.y)*adx+Math.cos(m.rotation.y)*adz)/(ad||1);
+        if(ad<reach+.6&&af>-.35)damagePlayer(e.c.dmg,m.position.x,m.position.z);
       }
+      const l=Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5,ox=m.position.x,oz=m.position.z;
+      const er=moveCabinSafe(ox,oz,ox+nx*l*dt*3,oz+nz*l*dt*3,e.radius);m.position.x=er.x;m.position.z=er.z;e.groundY=surfaceHeight(er.x,er.z)+u.soleOffset*e.c.sc;m.position.y=e.groundY;
+      if(!u.polyart)u.spine.rotation.x=0.12+Math.sin(Math.min(1,e.lunge/0.4)*Math.PI)*0.5;
+      if(e.lunge>0.5)e.lunge=0;
     }
     // Hard player-body separation after movement and attack lunges prevents a
     // creature from crossing the camera plane or appearing through the player.
@@ -2254,7 +2459,7 @@ async function requestGameFullscreen(){
   try{if(fn&&!document.fullscreenElement&&!document.webkitFullscreenElement)await fn.call(root,{navigationUI:"hide"});}catch(e){try{if(fn)await fn.call(root);}catch(_){}}
   try{if(screen.orientation&&screen.orientation.lock)await screen.orientation.lock("landscape");}catch(e){}
 }
-async function enterHaze(){await Promise.allSettled([requestGameFullscreen(),requestWakeLock()]);$("entryGate").classList.add("off");}
+async function enterHaze(){Audio.init();Audio.resume();await Promise.allSettled([requestGameFullscreen(),requestWakeLock()]);$("entryGate").classList.add("off");}
 $("enterGame").onclick=enterHaze;
 $("fullscreenBtn").onclick=requestGameFullscreen;
 
@@ -2322,6 +2527,7 @@ function animate(){
     if(GS.state==="title"){ camera.position.x=Math.sin(GS.time*0.05)*2; camera.rotation.y=Math.sin(GS.time*0.03)*0.1; }
     GS.time+=dt;
   }
+  updateImportedEnvironment(dt);
   wCam.aspect=camera.aspect;
   renderer.clear(); renderer.render(scene,camera); renderer.clearDepth();
   if(GS.state==="playing")renderer.render(wScene,wCam);

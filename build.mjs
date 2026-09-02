@@ -7,7 +7,7 @@ const required = [
   'BUILD_ID="haze-20260811-global-v1"',
   "entryGate", "requestGameFullscreen", "runProof", "completeRankedRun",
   "/api/leaderboard", "/api/run/start", "/api/run/complete", "/api/run/finish",
-  'src="/vendor/three.min.js"', 'property="og:image"', 'rel="icon"',
+  'src="/vendor/three.min.js"', 'src="/vendor/GLTFLoader.js"', 'property="og:image"', 'rel="icon"',
 ];
 for (const marker of required) if (!html.includes(marker)) throw new Error(`HAZE build verification failed: missing ${marker}`);
 for (const forbidden of ["window.__HAZE", "?debug=1", "unpkg.com", "cdnjs.cloudflare.com", "API_ORIGIN"]) {
@@ -17,7 +17,7 @@ if (html.length < 150_000) throw new Error(`HAZE build verification failed: HTML
 
 const threeSource = "node_modules/three/build/three.min.js";
 if (!existsSync(threeSource)) throw new Error("Three.js dependency is missing; run npm ci first.");
-for (const asset of ["public/how-to-play.css", "public/how-to-play.js"]) if (!existsSync(asset)) throw new Error(`HAZE build verification failed: missing ${asset}`);
+for (const asset of ["public/how-to-play.css", "public/how-to-play.js", "public/vendor/GLTFLoader.js", "public/assets/audio/manifest.json", "public/assets/environment/ASSET_SOURCES.md"]) if (!existsSync(asset)) throw new Error(`HAZE build verification failed: missing ${asset}`);
 
 const publicOrigin = "https://survivethehaze.netlify.app";
 const cloudflareOrigin = "https://haze.ksmostofa576.workers.dev";
