@@ -199,6 +199,19 @@
   #entryGate .entrySub{font:700 10px Arial;letter-spacing:.42em;color:#777b80;text-transform:uppercase;margin-top:18px}
   #entryGate .btn{margin-top:34px}
 
+  /* fullscreen reminder after the browser exits fullscreen */
+  #fullscreenNudge{position:fixed;left:50%;bottom:max(22px,env(safe-area-inset-bottom));z-index:24;
+    display:flex;align-items:center;gap:14px;max-width:min(92vw,560px);padding:10px 12px 10px 16px;
+    border:1px solid rgba(220,228,232,.18);background:rgba(5,9,12,.9);box-shadow:0 12px 36px rgba(0,0,0,.45);
+    opacity:0;pointer-events:none;transform:translate(-50%,14px);transition:opacity .2s,transform .2s}
+  #fullscreenNudge.on{opacity:1;pointer-events:auto;transform:translate(-50%,0)}
+  #fullscreenNudgeText{font:700 9px Arial;letter-spacing:.2em;color:#aeb5ba;text-transform:uppercase;white-space:nowrap}
+  #fullscreenNudge .btn{margin:0;padding:9px 14px;font-size:10px;letter-spacing:.16em;white-space:nowrap}
+  #fullscreenNudge .btn.ghost{margin-left:0;padding:7px 9px;border-width:1px;font-size:13px;letter-spacing:0;line-height:1}
+  @media (max-width:600px){#fullscreenNudge{left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:max(18px,env(safe-area-inset-bottom));
+    max-width:none;transform:translateY(14px);gap:10px;padding-left:12px}#fullscreenNudge.on{transform:translateY(0)}#fullscreenNudgeText{font-size:8px;letter-spacing:.14em;flex:1}
+    #fullscreenNudge .btn{padding:9px 10px;font-size:9px}}
+
   /* ranked victory submission */
   .scoreSubmit{margin-top:18px;max-width:440px;pointer-events:auto}
   .scoreSubmitRow{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap}
@@ -268,6 +281,11 @@
     <div class="entrySub">Cabin in the woods</div>
     <button class="btn" id="enterGame">Enter Fullscreen</button>
   </div>
+</div>
+<div id="fullscreenNudge" role="status" aria-live="polite" aria-hidden="true">
+  <span id="fullscreenNudgeText">Fullscreen is off</span>
+  <button class="btn" id="fullscreenNudgeBtn">Return to fullscreen</button>
+  <button class="btn ghost" id="fullscreenNudgeDismiss" aria-label="Dismiss fullscreen reminder">×</button>
 </div>
 <div id="app"></div>
 
@@ -2592,15 +2610,33 @@ function fmt(t){const m=t/60|0,s=t%60|0;return m+":"+String(s).padStart(2,"0");}
 
 /* fullscreen / landscape entry */
 let wakeLock=null;
+let fullscreenNudgeDismissed=false;
+function isGameFullscreen(){return !!(document.fullscreenElement||document.webkitFullscreenElement);}
+function fullscreenSupported(){const root=document.documentElement;return !!(root.requestFullscreen||root.webkitRequestFullscreen);}
+function setFullscreenNudge(on){
+  const nudge=$("fullscreenNudge");
+  const visible=!!on&&!isGameFullscreen()&&!fullscreenNudgeDismissed&&$("entryGate").classList.contains("off");
+  nudge.classList.toggle("on",visible);nudge.setAttribute("aria-hidden",visible?"false":"true");
+}
+function handleFullscreenChange(){
+  if(isGameFullscreen()){fullscreenNudgeDismissed=false;setFullscreenNudge(false);return;}
+  if(fullscreenSupported())setFullscreenNudge(true);
+}
 async function requestWakeLock(){try{if("wakeLock" in navigator&&document.visibilityState==="visible")wakeLock=await navigator.wakeLock.request("screen");}catch(e){wakeLock=null;}}
 async function requestGameFullscreen(){
   const root=document.documentElement,fn=root.requestFullscreen||root.webkitRequestFullscreen;
+  fullscreenNudgeDismissed=false;
   try{if(fn&&!document.fullscreenElement&&!document.webkitFullscreenElement)await fn.call(root,{navigationUI:"hide"});}catch(e){try{if(fn)await fn.call(root);}catch(_){}}
   try{if(screen.orientation&&screen.orientation.lock)await screen.orientation.lock("landscape");}catch(e){}
+  handleFullscreenChange();
 }
-async function enterHaze(){Audio.init();Audio.resume();await Promise.allSettled([requestGameFullscreen(),requestWakeLock()]);$("entryGate").classList.add("off");}
+async function enterHaze(){Audio.init();Audio.resume();await Promise.allSettled([requestGameFullscreen(),requestWakeLock()]);$("entryGate").classList.add("off");handleFullscreenChange();}
 $("enterGame").onclick=enterHaze;
 $("fullscreenBtn").onclick=requestGameFullscreen;
+$("fullscreenNudgeBtn").onclick=requestGameFullscreen;
+$("fullscreenNudgeDismiss").onclick=()=>{fullscreenNudgeDismissed=true;setFullscreenNudge(false);};
+document.addEventListener("fullscreenchange",handleFullscreenChange);
+document.addEventListener("webkitfullscreenchange",handleFullscreenChange);
 
 /* menu wiring */
 $("miNew").onclick=newGame; $("miResume").onclick=()=>{if(GS.state==="paused")resumeGame();};
