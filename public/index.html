@@ -92,6 +92,11 @@
   #objective{position:absolute;top:26px;left:50%;transform:translateX(-50%);text-align:center}
   #objTitle{font-family:Arial;font-size:11px;letter-spacing:.34em;color:#c9ccd0;text-transform:uppercase;font-weight:700}
   #objSub{font-family:Arial;font-size:12px;letter-spacing:.14em;color:#8f9296;margin-top:5px}
+  #cabinStatus{position:absolute;top:62px;left:50%;transform:translateX(-50%);font-family:Arial,sans-serif;font-size:10px;letter-spacing:.2em;color:#d2a374;text-transform:uppercase;text-align:center;white-space:nowrap;opacity:0;transition:opacity .18s,color .18s;text-shadow:0 2px 12px #000}
+  #cabinStatus.on{opacity:1}
+  #cabinStatus.good{color:#e0bc8d}
+  #cabinStatus.warn{color:#df9b73}
+  #cabinStatus.locked{color:#b9c0c5}
   #waveBanner{position:absolute;top:34%;left:50%;transform:translate(-50%,-50%);text-align:center;opacity:0}
   #waveBanner .wb1{font-size:52px;font-weight:900;letter-spacing:.2em;color:#f4f4f4;text-shadow:0 4px 30px #000}
   #waveBanner .wb2{font-family:Arial;font-size:13px;letter-spacing:.4em;color:#b9bcc0;text-transform:uppercase;margin-top:8px}
@@ -275,6 +280,7 @@
   <div id="radarWrap"><canvas id="radar" width="264" height="264"></canvas><div id="radarLbl">Perimeter</div></div>
   <div class="stats"><div class="lab">Score</div><div id="score">0</div><div id="kills">0 SLAIN</div></div>
   <div id="objective"><div id="objTitle">Survive the Haze</div><div id="objSub">Wave 1 / 6 — 0 remaining</div></div>
+  <div id="cabinStatus"></div>
   <div class="hp-wrap"><div class="lab">Vitality</div><div id="hpBar"><div id="hpFill"></div></div><div id="hpNum">100 / 100</div></div>
   <div id="wpnHud">
     <div id="wpnName">Cleaver</div>
@@ -857,8 +863,14 @@ function buildCabin(){
   const doorInt=new THREE.Mesh(new THREE.PlaneGeometry(CABIN_DOOR_HALF*2,2.2),CMAT.dark);
   doorInt.position.set(0,floorH+1.2,D/2-0.02); g.add(doorInt);
 
+  // Small, pooled recovery marker. It is deliberately subtle so the cabin
+  // still reads as a space, not as a bright objective billboard.
+  const recoveryMat=new THREE.MeshBasicMaterial({color:0xffb36b,transparent:true,opacity:.2,depthWrite:false,side:THREE.DoubleSide});
+  const recoveryMarker=new THREE.Mesh(new THREE.RingGeometry(.72,.82,32),recoveryMat);
+  recoveryMarker.rotation.x=-Math.PI/2; recoveryMarker.position.set(0,floorH+.145,-.45); g.add(recoveryMarker);
+
   g.position.set(0,0,0); scene.add(g);
-  return {group:g,windows:wins,glow,porchLight,W,D,doorInt};
+  return {group:g,windows:wins,glow,porchLight,W,D,doorInt,recoveryMarker,recoveryMat};
 }
 
 const leafData=[],trunkData=[],branchData=[],grassData=[];
@@ -1169,6 +1181,7 @@ const trail=(function(){
 })();
 
 function setWeapon(i){
+  if(GS.state==="playing"&&GS.insideCabin)cancelCabinRecovery("attack");
   if(GS.swinging){GS.queuedWeapon=(i+WEAPONS.length)%WEAPONS.length;return;}
   curWpn=(i+WEAPONS.length)%WEAPONS.length;
   WEAPONS.forEach((w,k)=>w.g.visible=(k===curWpn));
@@ -1852,6 +1865,10 @@ const Audio=(function(){
 })();
 
 /* ============================ GAME STATE ============================ */
+const CABIN_RECOVERY_BUDGET=30,CABIN_RECOVERY_RATE=10,CABIN_RECOVERY_CAP=80,
+  CABIN_RECOVERY_START=0.9,CABIN_RECOVERY_RESTART=1.2,CABIN_PRESSURE_WARN=6,
+  CABIN_PRESSURE_RESET=5,CABIN_RECOVERY_RADIUS=1.05,CABIN_INTERMISSION_RATE=24,
+  CABIN_RECOVERY_X=0,CABIN_RECOVERY_Z=-.45;
 const WAVES=[  // objective: survive 6 waves; last has a brute
   {shamblers:6, runners:0, brutes:0},
   {shamblers:7, runners:2, brutes:0},
@@ -1864,6 +1881,7 @@ const GS={state:"title",hp:100,maxhp:100,score:0,kills:0,wave:0,time:0,
   atkTimer:0,swinging:false,swingT:0,swingDir:1,hitset:new Set(),attackBuffer:0,swingWeapon:0,queuedWeapon:null,
   hurtCd:0,shake:0,hitstop:0,bob:0,stepPhase:0,
   waveActive:false,toSpawn:0,spawnQueue:[],spawnTimer:0,remaining:0,intermission:0,insideCabin:false,shelterTime:0,
+  playerMoved:false,cabinReserve:CABIN_RECOVERY_BUDGET,cabinState:"outside",cabinStill:0,cabinPressure:0,cabinOutside:5,cabinCooldown:0,cabinStatusKey:"",
   stormNext:3.2,stormFlash:0,thunder:0,hudTimer:0,radarTimer:0};
 
 /* ============================ INPUT ============================ */
@@ -1936,6 +1954,66 @@ document.addEventListener("pointerlockchange",()=>{
   if(document.pointerLockElement!==canvas && GS.state==="playing") pauseGame();
 });
 
+/* ============================ CABIN RECOVERY ============================ */
+function setCabinStatus(text,kind=""){
+  const el=$("cabinStatus"),key=kind+"|"+text;
+  if(key===GS.cabinStatusKey)return;
+  GS.cabinStatusKey=key;el.textContent=text;el.className=text?"on "+kind:"";
+}
+function insideRecoverySpot(x,z){const dx=x-CABIN_RECOVERY_X,dz=z-CABIN_RECOVERY_Z;return dx*dx+dz*dz<=CABIN_RECOVERY_RADIUS*CABIN_RECOVERY_RADIUS;}
+function cancelCabinRecovery(reason){
+  if(GS.state!=="playing"||!GS.insideCabin)return;
+  const active=GS.cabinState==="ready"||GS.cabinState==="recovering"||GS.cabinState==="warning"||GS.cabinState==="interrupted"||GS.cabinState==="breached";
+  if(active){GS.cabinStill=0;GS.cabinCooldown=Math.max(GS.cabinCooldown,CABIN_RECOVERY_RESTART);GS.cabinState=reason==="breach"?"breached":"interrupted";}
+  if(reason==="breach")setCabinStatus("SHELTER BREACHED","warn");
+  else if(reason==="damage")setCabinStatus("RECOVERY INTERRUPTED · DAMAGE","warn");
+  else if(reason==="attack")setCabinStatus("RECOVERY INTERRUPTED · ATTACK","warn");
+  else if(reason==="move")setCabinStatus("RECOVERY INTERRUPTED · MOVE","warn");
+}
+function updateCabinMarker(){
+  if(!CABIN||!CABIN.recoveryMarker)return;
+  const m=CABIN.recoveryMarker,st=GS.cabinState;
+  m.visible=GS.state==="playing";
+  m.material.opacity=st==="locked"?.06:GS.cabinPressure>=CABIN_PRESSURE_WARN-1?.16:st==="recovering"?.62:st==="empty"?.08:.2;
+  m.scale.setScalar(1+Math.sin(GS.time*3.2)*.035);
+}
+function updateCabinRecovery(dt){
+  const inside=GS.insideCabin;
+  if(!inside){
+    GS.cabinOutside+=dt;
+    GS.cabinStill=0;GS.cabinCooldown=0;GS.cabinState="outside";
+    if(GS.cabinOutside>=CABIN_PRESSURE_RESET)GS.cabinPressure=0;
+    setCabinStatus("");updateCabinMarker();return;
+  }
+  GS.cabinOutside=0;
+  if(GS.intermission>0){
+    GS.cabinPressure=0;GS.cabinStill=0;GS.cabinCooldown=0;GS.cabinReserve=CABIN_RECOVERY_BUDGET;GS.cabinState="intermission";
+    if(GS.hp<GS.maxhp)GS.hp=Math.min(GS.maxhp,GS.hp+CABIN_INTERMISSION_RATE*dt);
+    setCabinStatus("WAVE CLEAR · RECOVERING","good");updateCabinMarker();return;
+  }
+  if(!GS.waveActive){setCabinStatus("");updateCabinMarker();return;}
+  GS.cabinPressure=Math.min(CABIN_PRESSURE_WARN,GS.cabinPressure+dt);
+  const threat=enemies.some(e=>!e.dead&&insideCabin(e.m.position.x,e.m.position.z));
+  if(threat){cancelCabinRecovery("breach");updateCabinMarker();return;}
+  if(GS.cabinState==="breached"){GS.cabinCooldown=Math.max(GS.cabinCooldown,CABIN_RECOVERY_RESTART);GS.cabinState="interrupted";}
+  if(GS.cabinPressure>=CABIN_PRESSURE_WARN){GS.cabinStill=0;GS.cabinState="locked";setCabinStatus("THE HAZE IS INSIDE · HEALING LOCKED","locked");updateCabinMarker();return;}
+  const pressureWarning=GS.cabinPressure>=CABIN_PRESSURE_WARN-1;
+  if(!insideRecoverySpot(camera.position.x,camera.position.z)){
+    GS.cabinStill=0;GS.cabinState="outOfSpot";setCabinStatus("CABIN · MOVE TO THE LAMP","good");updateCabinMarker();return;
+  }
+  if(GS.cabinCooldown>0){GS.cabinCooldown=Math.max(0,GS.cabinCooldown-dt);GS.cabinStill=0;GS.cabinState="interrupted";setCabinStatus("RECOVERY INTERRUPTED · WAIT "+GS.cabinCooldown.toFixed(1),"warn");updateCabinMarker();return;}
+  if(GS.playerMoved&&(GS.cabinState==="ready"||GS.cabinState==="recovering")){cancelCabinRecovery("move");updateCabinMarker();return;}
+  if(GS.cabinReserve<=.01){GS.cabinStill=0;GS.cabinState="empty";setCabinStatus("CABIN RESERVE EMPTY · NEXT WAVE","locked");updateCabinMarker();return;}
+  if(GS.hp>=CABIN_RECOVERY_CAP-.01){GS.cabinStill=0;GS.cabinState="empty";setCabinStatus("RECOVERY FULL · 80 MAX","locked");updateCabinMarker();return;}
+  GS.cabinStill+=dt;
+  if(GS.cabinStill<CABIN_RECOVERY_START){GS.cabinState=pressureWarning?"warning":"ready";setCabinStatus(pressureWarning?"THE HAZE IS INSIDE · "+Math.ceil(CABIN_PRESSURE_WARN-GS.cabinPressure):"HOLD STILL "+Math.max(0,CABIN_RECOVERY_START-GS.cabinStill).toFixed(1),pressureWarning?"warn":"good");updateCabinMarker();return;}
+  GS.cabinState=pressureWarning?"warning":"recovering";
+  const amount=Math.min(CABIN_RECOVERY_RATE*dt,GS.cabinReserve,CABIN_RECOVERY_CAP-GS.hp);
+  if(amount>0){GS.hp+=amount;GS.cabinReserve-=amount;}
+  const reserve=Math.ceil(Math.max(0,GS.cabinReserve));
+  setCabinStatus(pressureWarning?"THE HAZE IS INSIDE · "+Math.ceil(CABIN_PRESSURE_WARN-GS.cabinPressure):"RECOVERING "+reserve+" / "+CABIN_RECOVERY_BUDGET,pressureWarning?"warn":"good");updateCabinMarker();
+}
+
 /* ============================ COMBAT ============================ */
 function segSeg(ax,az,bx,bz,cx,cz,dx,dz){
   const abx=bx-ax,abz=bz-az,cdx=dx-cx,cdz=dz-cz,den=abx*cdz-abz*cdx;
@@ -1956,6 +2034,7 @@ function meleeOccluded(px,pz,tx,tz){
 function cabinSoundOccluded(px,pz,tx,tz){for(const w of CABIN_WALLS)if(segSeg(px,pz,tx,tz,w[0],w[1],w[2],w[3]))return true;return false;}
 function tryAttack(){
   if(GS.state!=="playing")return false;
+  if(GS.insideCabin)cancelCabinRecovery("attack");
   if(GS.atkTimer>0||GS.swinging){GS.attackBuffer=.18;return false;}
   const w=WEAPONS[curWpn];
   GS.swinging=true; GS.swingT=0; GS.atkTimer=w.cd; GS.swingDir*=-1; GS.hitset.clear();GS.swingWeapon=curWpn;
@@ -2008,6 +2087,7 @@ function damageEnemy(e,dmg,nx,nz,kb){
 }
 function damagePlayer(amount,fromX,fromZ){
   if(GS.state!=="playing"||GS.hurtCd>0)return false;
+  if(GS.insideCabin)cancelCabinRecovery("damage");
   GS.hp-=amount; GS.hurtCd=0.5; GS.shake=Math.max(GS.shake,0.28); flashDamage();
   // directional arrow
   const ang=Math.atan2(fromX-camera.position.x,-(fromZ-camera.position.z))-yaw;
@@ -2034,6 +2114,7 @@ let wbT=0; function waveBanner(n,sub){const b=$("waveBanner");b.querySelector(".
 /* ============================ WAVES / OBJECTIVE ============================ */
 function startWave(n){
   GS.wave=n; const w=WAVES[n-1];
+  GS.cabinReserve=CABIN_RECOVERY_BUDGET;GS.cabinState=GS.insideCabin?"outOfSpot":"outside";GS.cabinStill=0;GS.cabinPressure=0;GS.cabinOutside=0;GS.cabinCooldown=0;GS.cabinStatusKey="";
   GS.spawnQueue=[];
   for(let i=0;i<w.shamblers;i++)GS.spawnQueue.push("shambler");
   for(let i=0;i<w.runners;i++)GS.spawnQueue.push("runner");
@@ -2090,6 +2171,7 @@ function updatePlayer(dt){
     GS.stepPhase+=dt*(sprint>1?13:9);
     if(Math.sin(GS.stepPhase)>0.98)Audio.step();
   }
+  GS.playerMoved=moving;
   GS.bob+=dt*(moving?(sprint>1?13:10):8);
   const bY=Math.sin(GS.bob)*(moving?(sprint>1?0.09:0.06):0.012);
   let shx=0,shy=0;
@@ -2098,14 +2180,8 @@ function updatePlayer(dt){
   const playerFloor=surfaceHeight(camera.position.x,camera.position.z);
   camera.position.y=playerFloor+1.7+bY;
   camera.rotation.set(pitch+shy,yaw+shx,Math.sin(GS.bob*0.5)*0.006);
-  if(GS.insideCabin){
-    GS.shelterTime+=dt;
-    if(GS.hp<GS.maxhp){GS.hp=Math.min(GS.maxhp,GS.hp+9*dt);updateHUD();}
-    $("objTitle").textContent="Shelter — recovering";
-  }else{
-    GS.shelterTime=Math.max(0,GS.shelterTime-dt*.35);
-    $("objTitle").textContent="Survive the Haze";
-  }
+  GS.shelterTime=GS.cabinPressure;
+  $("objTitle").textContent=GS.insideCabin?"Shelter":"Survive the Haze";
 }
 
 /* ============================ WEAPON ANIM ============================ */
@@ -2410,7 +2486,7 @@ async function newGame(){
   status.textContent="Verified run ready";$("miNew").style.pointerEvents="";startingRun=false;clearFlowTimers();
   Audio.init();Audio.resetRun();Audio.resume();Audio.resumeRun();Audio.dr(true);Audio.setVol(SET.volume);
   GS.state="playing"; GS.hp=GS.maxhp=100; GS.score=0; GS.kills=0; GS.wave=0; GS.time=0;
-  GS.atkTimer=0;GS.swinging=false;GS.swingT=0;GS.hitset.clear();GS.attackBuffer=0;GS.swingWeapon=0;GS.queuedWeapon=null;GS.shake=0;GS.hitstop=0;GS.insideCabin=false;GS.shelterTime=0;GS.intermission=0;GS.waveActive=false;GS.spawnQueue.length=0;GS.spawnTimer=0;GS.remaining=0;GS.stormNext=2.6;GS.stormFlash=0;GS.thunder=0;fleshReveal=0;ANATOMY_PALETTES.forEach(p=>p.state.localReveal=0);updateFleshReveal();
+  GS.atkTimer=0;GS.swinging=false;GS.swingT=0;GS.hitset.clear();GS.attackBuffer=0;GS.swingWeapon=0;GS.queuedWeapon=null;GS.shake=0;GS.hitstop=0;GS.insideCabin=false;GS.shelterTime=0;GS.playerMoved=false;GS.cabinReserve=CABIN_RECOVERY_BUDGET;GS.cabinState="outside";GS.cabinStill=0;GS.cabinPressure=0;GS.cabinOutside=CABIN_PRESSURE_RESET;GS.cabinCooldown=0;GS.cabinStatusKey="";GS.intermission=0;GS.waveActive=false;GS.spawnQueue.length=0;GS.spawnTimer=0;GS.remaining=0;GS.stormNext=2.6;GS.stormFlash=0;GS.thunder=0;fleshReveal=0;ANATOMY_PALETTES.forEach(p=>p.state.localReveal=0);updateFleshReveal();
   variantCounter=0;CABIN.doorInt.visible=true;CABIN.glow.intensity=.36;CABIN.porchLight.intensity=.58;
   for(const e of enemies)scene.remove(e.m); enemies.length=0;
   resetTouchInput();camera.position.set(0,1.7,16);yaw=0;pitch=0;setWeapon(0);canvas.focus({preventScroll:true});
@@ -2516,6 +2592,7 @@ function animate(){
     updatePlayer(dt);
     updateWeapon(dt);
     updateEnemies(sdt);
+    updateCabinRecovery(dt);
     updateWaves(dt);
     updateFX(dt);
     updateStorm(dt);
