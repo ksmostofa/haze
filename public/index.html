@@ -1300,7 +1300,8 @@ const POLYART_ANIM_FILES={
   }
 };
 const POLYART={ready:false,starterReady:false,templates:[],clips:{female:{},male:{}},promise:null,
-  phase:"queued",loaded:0,total:23,failed:false,
+  phase:"queued",loaded:0,total:13,failed:false,
+  visualVariant(variant){return this.templates[variant]?variant:(variant<5?0:5);},
   variantReady(variant){const kind=variant<5?"female":"male",clips=this.clips[kind];
     return !!this.templates[variant]&&!!clips.idle&&!!clips.walk&&!!clips.attack;}
 };
@@ -1351,8 +1352,8 @@ function tunePolyartScene(root,palette){
 }
 async function loadPolyartZombies(){
   // Two representative rigs and the clips needed to walk and attack are the
-  // starter payload. Everything else is deliberately parsed after the first
-  // playable frame so a low-end device never waits for the art catalog.
+  // starter payload. Every playable enemy uses one of these finished rigs;
+  // there is no procedural visual fallback in a live run.
   try{
     POLYART.phase="palette";
     const palette=await loadHazeZombiePalette(); markPolyartLoad("palette");
@@ -1372,21 +1373,7 @@ async function loadPolyartZombies(){
       }
     }
     POLYART.starterReady=true;
-
-    // Optional idle variation, then the remaining silhouettes. A frame yield
-    // between parses keeps animation and input responsive while the cache warms.
-    for(const kind of ["female","male"]){
-      const dir=kind==="female"?"gltf_ZombieFemale":"gltf_ZombieMale";
-      const idle2=POLYART_ANIM_FILES[kind].idle2,g=await loadGltf(POLYART_ROOT+"animations-gltf/"+dir+"/"+idle2),clip=g.animations?.[0];
-      if(clip){clip.name="polyart_"+kind+"_idle2";POLYART.clips[kind].idle2=clip;markPolyartLoad("idle variation");}
-      await waitForFrame();
-    }
-    for(const i of [1,2,3,4,6,7,8,9]){
-      const g=await loadGltf(POLYART_ROOT+"rig-gltf_joined/"+POLYART_MODEL_FILES[i]);
-      POLYART.templates[i]={kind:i<5?"female":"male",scene:tunePolyartScene(g.scene,palette)};markPolyartLoad("background rigs");
-      await waitForFrame();
-    }
-    POLYART.ready=true;POLYART.phase="complete";POLYART.loaded=POLYART.total;
+    POLYART.phase="starter complete";POLYART.loaded=POLYART.total;
     return true;
   }catch(err){
     POLYART.failed=true;POLYART.phase="fallback";
@@ -1460,8 +1447,8 @@ function collectPolyartDeathBones(visual){
   return bones;
 }
 function makePolyartZombie(type,variant){
-  const kind=variant<5?"female":"male",spec=POLYART.templates[variant];
-  if(!spec)return makeZombie(type,variant);
+  const visualVariant=POLYART.visualVariant(variant),kind=variant<5?"female":"male",spec=POLYART.templates[visualVariant];
+  if(!spec)throw new Error("Polyart starter rig unavailable");
   const visual=THREE.SkeletonUtils.clone(spec.scene),motionRoot=visual.getObjectByName("rig_CharRoot"),motionBase=motionRoot?motionRoot.position.clone():null,
     mixer=new THREE.AnimationMixer(visual),attackMixer=new THREE.AnimationMixer(visual),clips=POLYART.clips[kind],actions={};
   for(const [role,clip] of Object.entries(clips)){
@@ -1778,7 +1765,7 @@ function spawnEnemy(entry){
   const variant=forcedVariant==null?(variantCounter++)%10:((forcedVariant%10)+10)%10;
   const base=TYPES[type],a=ARCH_STATS[variant];
   const c={hp:Math.round(base.hp*a.hp),spd:base.spd*a.spd,dmg:Math.round(base.dmg*a.dmg),score:Math.round(base.score*(.8+a.hp*.35)),sc:base.sc*a.sc,cd:base.cd};
-  const m=POLYART.variantReady(variant)?makePolyartZombie(type,variant):makeZombie(type,variant); m.scale.setScalar(c.sc);
+  const m=makePolyartZombie(type,variant);m.scale.setScalar(c.sc);
   // Spawn beyond the first tree ring, then walk a short, collision-safe path
   // into the clearing. Candidate sockets in the camera's forward cone are
   // rejected, which keeps the arrival hidden even when a wave starts mid-look.
@@ -2136,6 +2123,7 @@ function updateWaves(dt){
   if(GS.spawnQueue.length>0){
     GS.spawnTimer-=dt;
     if(GS.spawnTimer<=0 && alive<maxAlive){
+      if(!POLYART.starterReady){GS.spawnTimer=.12;return;}
       GS.spawnTimer=Math.max(0.5,1.6-GS.wave*0.12);
       spawnEnemy(GS.spawnQueue.pop());
     }
@@ -2548,10 +2536,15 @@ const runLoader={timer:null,showTimer:null,index:0,startedAt:0,
     $("runLoader").classList.remove("on");$("runLoader").setAttribute("aria-hidden","true");
   }
 };
+async function waitForPolyartStarter(timeoutMs=12000){
+  const deadline=performance.now()+timeoutMs;
+  while(!POLYART.starterReady&&!POLYART.failed&&performance.now()<deadline)await waitForFrame();
+  return POLYART.starterReady;
+}
 async function newGame(){
   if(startingRun)return;startingRun=true;const status=$("rankedStatus");status.textContent="Starting verified ranked run…";$("miNew").style.pointerEvents="none";runLoader.start();
-  try{status.textContent="Preparing the night…";await beginRankedRun();if(!rankedRunToken)throw new Error("Ranked service unavailable");}
-  catch(e){status.textContent="Ranked service unavailable · tap Start New Game to retry";$("miNew").style.pointerEvents="";startingRun=false;runLoader.stop();return;}
+  try{status.textContent="Preparing the night…";await beginRankedRun();if(!rankedRunToken)throw new Error("Ranked service unavailable");status.textContent="Waking the starter rigs…";if(!await waitForPolyartStarter())throw new Error("Zombie rigs unavailable");}
+  catch(e){status.textContent=(e&&e.message==="Zombie rigs unavailable"?"Zombie rigs unavailable · tap Start New Game to retry":"Ranked service unavailable · tap Start New Game to retry");$("miNew").style.pointerEvents="";startingRun=false;runLoader.stop();return;}
   runLoader.stop();
   status.textContent="Verified run ready";$("miNew").style.pointerEvents="";startingRun=false;clearFlowTimers();
   Audio.init();Audio.resetRun();Audio.resume();Audio.resumeRun();Audio.dr(true);Audio.setVol(SET.volume);
