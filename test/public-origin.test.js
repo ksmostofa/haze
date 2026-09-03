@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 const entry = readFileSync(new URL("../src/entry.js", import.meta.url), "utf8");
 const build = readFileSync(new URL("../build.mjs", import.meta.url), "utf8");
+const index = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
 const netlify = readFileSync(new URL("../netlify.toml", import.meta.url), "utf8");
 const redirects = readFileSync(new URL("../netlify-proxy/_redirects", import.meta.url), "utf8");
 const verify = readFileSync(new URL("../.github/workflows/verify.yml", import.meta.url), "utf8");
@@ -37,6 +38,7 @@ describe("public Netlify domain", () => {
     expect(build).toContain("updateAdaptiveQuality");
     expect(build).toContain("enemyRouteScratch");
     expect(build).toContain("allocation-free cabin sweep");
+    expect(index).toContain('src="/loader-state.js"');
     expect(build).toContain('/how-to-play.css');
     expect(build).toContain('/how-to-play.js');
   });

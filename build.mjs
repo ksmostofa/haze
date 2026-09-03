@@ -17,6 +17,7 @@ if (html.length < 150_000) throw new Error(`HAZE build verification failed: HTML
 
 const threeSource = "node_modules/three/build/three.min.js";
 if (!existsSync(threeSource)) throw new Error("Three.js dependency is missing; run npm ci first.");
+if (!existsSync("public/loader-state.js")) throw new Error("HAZE build verification failed: missing public/loader-state.js");
 for (const asset of ["public/how-to-play.css", "public/how-to-play.js", "public/vendor/GLTFLoader.js", "public/assets/audio/manifest.json", "public/assets/environment/ASSET_SOURCES.md"]) if (!existsSync(asset)) throw new Error(`HAZE build verification failed: missing ${asset}`);
 
 const publicOrigin = "https://survivethehaze.netlify.app";
